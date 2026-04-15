@@ -6,7 +6,6 @@ import sys
 import shutil
 import os
 import json
-import time
 import socket
 import subprocess
 from pathlib import Path
@@ -22,6 +21,7 @@ class BaseClient:
     def __init__(self):
         self.queue = asyncio.Queue()
         self.transport = None
+        self.datagram_counter = 0
 
     async def recv(self):
         return await self.queue.get()
@@ -41,6 +41,7 @@ class BaseClient:
     def error_received(self, exc):
         pass
     def datagram_received(self, data, addr):
+        self.datagram_counter += 1
         self.queue.put_nowait(data)
 
 class Forwarder(BaseClient):
@@ -105,8 +106,18 @@ class UdpServer(Server):
     async def serve(self):
         self.clients = {}
         await self.loop.create_datagram_endpoint(lambda: self, local_addr=self.from_addr)
-        # never finishes
-        await self.loop.create_future()
+        # mitmproxy has a udp timeout of 20s
+        counters = {}
+        while True:
+            await asyncio.sleep(20)
+            for addr, client in self.clients.items():
+                if addr not in counters:
+                    counters[addr] = client.datagram_counter
+                elif counters[addr] == client.datagram_counter:
+                    # counter hasn't changed, close it
+                    client.connection_lost(None)
+            for addr in counters.keys() - self.clients.keys():
+                counters.pop(addr)
 
     def connection_made(self, transport):
         self.transport = transport
