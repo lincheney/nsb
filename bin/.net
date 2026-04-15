@@ -1,0 +1,270 @@
+#!/usr/bin/env -S python3 -SI
+
+import asyncio
+import shlex
+import sys
+import shutil
+import os
+import json
+import socket
+import subprocess
+import argparse
+from pathlib import Path
+
+LOCALHOST = '127.0.0.1'
+
+def get_free_port():
+    with socket.socket() as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+class Connection:
+
+    async def _make(self, addr, fut):
+        self.addr = addr
+        await fut
+        return self
+
+    async def make_udp_server(self, *addr):
+        return await self._make(addr, self.loop.create_datagram_endpoint(lambda: self, local_addr=addr))
+
+    async def make_udp_client(self, *addr):
+        return await self._make(addr, self.loop.create_datagram_endpoint(lambda: self, remote_addr=addr))
+
+    async def make_tcp_server(self, *addr):
+        return await self._make(addr, self.loop.create_server(lambda: self, *addr))
+
+    async def make_tcp_client(self, *addr):
+        return await self._make(addr, self.loop.create_connection(lambda: self, *addr))
+
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.read_queue = asyncio.Queue()
+        self.finished = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+        self.peername = transport.get_extra_info('peername')
+
+        if hasattr(self.transport, 'sendto'):
+            self.send = self.transport.sendto
+        else:
+            self.send = lambda data, addr: self.transport.write(data)
+
+    def error_received(self, exc):
+        pass # TODO
+
+    def eof_received(self):
+        self.read_queue.shutdown()
+
+    def connection_lost(self, exc):
+        self.read_queue.shutdown()
+
+    def datagram_received(self, data, addr):
+        self.read_queue.put_nowait((data, addr))
+
+    def data_received(self, data):
+        self.read_queue.put_nowait((data, self.peername))
+
+    async def recv(self):
+        return await self.read_queue.get()
+
+    async def forward_to(self, other, addr):
+        while True:
+            try:
+                data, _addr = await self.recv()
+            except asyncio.QueueShutDown:
+                other.transport.close()
+                break
+            else:
+                other.send(data, addr)
+
+class Handler:
+    def __init__(self, args, extras):
+        self.args = args
+        self.extras = extras
+        self.mitm = None
+
+        self.dns_port = get_free_port()
+        self.wg_port = get_free_port()
+
+        self.tap_iface = 'eth0'
+        self.wg_iface = 'eth1'
+        self.tap_subnet = '169.254.2.1/32'
+        self.host_ip = '192.168.1.2'
+        self.wg_ip = '192.168.2.2'
+        self.wg_subnet = f'{self.wg_ip}/24'
+        self.wg_conf = Path('~/.mitmproxy/wireguard.conf').expanduser()
+
+    async def start_pasta(self):
+        command = ' '.join(map(shlex.quote, self.extras))
+        if ld_preload := os.environ.pop('LD_PRELOAD', None):
+            command = f'/usr/bin/env LD_PRELOAD={shlex.quote(ld_preload)} {command}'
+
+        wg_conf = json.loads(self.wg_conf.read_text())
+        client_key = wg_conf['client_key']
+        # i could do async but this is just easier
+        server_key = subprocess.check_output(['wg', 'pubkey'], input=wg_conf['server_key'], text=True).strip('\n')
+        path = subprocess.check_output(['/usr/bin/getconf', 'PATH'], text=True).strip('\n')
+
+        script_sh = f'''
+set -eu -o pipefail
+# set up wireguard
+ip link add dev {self.wg_iface} type wireguard
+ip address add dev {self.wg_iface} {self.wg_subnet}
+wg set {self.wg_iface} private-key <(printf %s "$__wg_client_key") peer "$__wg_server_key" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{self.wg_port}
+unset __wg_client_key __wg_server_key
+ip link set up dev {self.wg_iface}
+
+# route everything through wireguard
+ip route show | grep -F 'dev {self.tap_iface}' | cut -d' ' -f1 | xargs -n1 ip route del
+ip route add default via {self.wg_ip} dev {self.wg_iface}
+ip route add {self.host_ip}/32 dev {self.tap_iface}
+# drop everything else
+iptables -A OUTPUT -p udp -d {self.host_ip} --dport {self.wg_port} -o {self.tap_iface} -j ACCEPT
+iptables -A OUTPUT -o {self.tap_iface} -j DROP
+ip6tables -A OUTPUT -o {self.tap_iface} -j DROP
+
+mount -t tmpfs -o size=10M tmpfs /tmp
+# override some files
+echo nameserver {LOCALHOST} > /tmp/resolv.conf
+cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > /tmp/certs
+[[ -e /etc ]] || mount -t tmpfs -o size=100M tmpfs /etc
+mount --bind /tmp/resolv.conf /etc/resolv.conf -o ro
+mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
+umount /tmp
+
+# drop net admin and reset user
+setpriv --bounding-set -net_admin -- \\
+unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
+{command}
+'''
+
+        return await asyncio.create_subprocess_exec(
+            shutil.which('pasta', path=path),
+            '--ipv4-only',
+            '--address', self.tap_subnet.partition('/')[0],
+            '--netmask', self.tap_subnet.partition('/')[2],
+            '-T', f'53:{self.dns_port}',
+            '-U', f'53:{self.dns_port}',
+            #  '-t', 'auto',
+            #  '-u', 'auto',
+            '-I', self.tap_iface,
+            '--map-host-loopback', self.host_ip,
+            '--config-net',
+            'bash', '-c', script_sh,
+
+            env={
+                '__wg_server_key': server_key,
+                '__wg_client_key': client_key,
+                **{k: v for k, v in os.environ.items() if k not in {'LD_PRELOAD'}},
+            }
+        )
+
+    async def _start_mitmproxy(self):
+        proc = await asyncio.create_subprocess_exec(
+            'mitmdump',
+            '--mode', f'wireguard@{LOCALHOST}:{self.mitm_wg_port}',
+            '--mode', f'dns@{LOCALHOST}:{self.mitm_dns_port}',
+            '--show-ignored-hosts',
+            #  '--showhost',
+            *self.args,
+        )
+
+        # wait for the dns to be up
+        # for udp i don't know when the server is actually up
+        # which means any request we send too early will disappear
+        # and will have to wait for timeout+retry
+        # its faster to hold and send it only once we know its working
+
+        # i swear this works
+        query = b'\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00' + b'\x00' + b'\x00\x01\x00\x01'
+
+        client = await Connection().make_udp_client(LOCALHOST, self.mitm_dns_port)
+        while True:
+            client.send(query, client.addr)
+            try:
+                await asyncio.wait_for(client.recv(), timeout=0.1)
+                break
+            except TimeoutError:
+                pass
+
+        return proc
+
+    def start_mitmproxy(self):
+        if self.mitm is None:
+            self.mitm = asyncio.create_task(self._start_mitmproxy())
+        return self.mitm
+
+    def mitmproxy_is_finished(self):
+        return self.mitm and self.mitm.done() and self.mitm.result().returncode is not None
+
+    async def proxy(self, from_conn, to_conn):
+        server = None
+        connections = {}
+        while not self.mitmproxy_is_finished():
+            server = server or await from_conn
+            try:
+                data, addr = await server.recv()
+            except asyncio.QueueShutDown:
+                break
+
+            if conn := connections.get(addr):
+                conn.send(data, conn.addr)
+            else:
+                await self.start_mitmproxy()
+                conn = connections[addr] = await to_conn()
+                conn.send(data, conn.addr)
+                task = asyncio.create_task(conn.forward_to(server, addr))
+                task.add_done_callback(lambda _, addr=addr: connections.pop(addr))
+
+    async def main(self):
+        if self.wg_conf.exists():
+            pasta = await self.start_pasta()
+
+            self.mitm_dns_port = get_free_port()
+            self.mitm_wg_port = get_free_port()
+
+            asyncio.create_task(self.proxy(
+                Connection().make_udp_server(LOCALHOST, self.wg_port),
+                lambda: Connection().make_udp_client(LOCALHOST, self.mitm_wg_port)
+            ))
+            asyncio.create_task(self.proxy(
+                Connection().make_udp_server(LOCALHOST, self.dns_port),
+                lambda: Connection().make_udp_client(LOCALHOST, self.mitm_dns_port)
+            ))
+            asyncio.create_task(self.proxy(
+                Connection().make_tcp_server(LOCALHOST, self.dns_port),
+                lambda: Connection().make_tcp_client(LOCALHOST, self.mitm_dns_port)
+            ))
+
+        else:
+            # launch mitmproxy first to create the wg config
+            self.mitm_wg_port = self.wg_port
+            self.mitm_dns_port = self.dns_port
+            asyncio.create_task(await self.start_mitmproxy())
+            while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
+                await asyncio.sleep(0.1)
+
+            pasta = await self.start_pasta()
+
+        return await pasta.wait()
+
+async def main():
+    args = []
+    extras = None
+    for arg in sys.argv[1:]:
+        if extras is not None:
+            extras.append(arg)
+        elif arg == '--':
+            extras = []
+        elif not arg.startswith('--'):
+            extras = [arg]
+        else:
+            args.append(arg)
+
+    return await Handler(args, extras).main()
+
+
+if __name__ == '__main__':
+    sys.exit(asyncio.run(main()))
