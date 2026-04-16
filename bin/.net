@@ -26,6 +26,12 @@ class BaseClient:
     async def recv(self):
         return await self.queue.get()
 
+    def enqueue(self, value):
+        try:
+            self.queue.put_nowait(value)
+        except asyncio.QueueShutDown:
+            pass
+
     def connection_made(self, transport):
         self.transport = transport
     def connection_lost(self, exc):
@@ -33,16 +39,16 @@ class BaseClient:
 
     # tcp
     def eof_received(self):
-        self.queue.put_nowait(None)
+        self.enqueue(None)
     def data_received(self, data):
-        self.queue.put_nowait(data)
+        self.enqueue(data)
 
     # udp
     def error_received(self, exc):
         pass
     def datagram_received(self, data, addr):
         self.datagram_counter += 1
-        self.queue.put_nowait(data)
+        self.enqueue(data)
 
 class Forwarder(BaseClient):
     async def forward_to(self, client):
@@ -60,6 +66,7 @@ class Forwarder(BaseClient):
 
 class Server:
     def __init__(self, from_addr, to_addr, start_fn):
+        super().__init__()
         self.loop = asyncio.get_running_loop()
         self.from_addr = from_addr
         self.to_addr = to_addr
@@ -68,7 +75,7 @@ class Server:
     def make_client(self, transport, addr, factory):
         inbound = factory(addr)
         if transport:
-            inbound.transport = transport
+            inbound.connection_made(transport)
         proxy = factory(self.to_addr)
         asyncio.create_task(self.forward(inbound, proxy))
         return inbound
@@ -77,11 +84,12 @@ class Server:
         await self.start_fn()
         await self.connect_proxy(proxy)
         try:
-            await asyncio.gather(
-                inbound.forward_to(proxy),
-                proxy.forward_to(inbound),
-            )
+            forward = asyncio.create_task(inbound.forward_to(proxy))
+            backward = asyncio.create_task(proxy.forward_to(inbound))
+            await asyncio.gather(forward, backward)
         finally:
+            forward.cancel()
+            backward.cancel()
             inbound.transport.close()
             proxy.transport.close()
 
@@ -98,14 +106,13 @@ class TcpClient(Forwarder):
     def send(self, data):
         self.transport.write(data)
 
-    def eof_received(self):
-        self.queue.shutdown()
 
-
-class UdpServer(Server):
+class UdpServer(Server, BaseClient):
     async def serve(self):
         self.clients = {}
         await self.loop.create_datagram_endpoint(lambda: self, local_addr=self.from_addr)
+        # do not allow the server transport to be closed
+        self.transport.close = lambda: 0
         # mitmproxy has a udp timeout of 20s
         counters = {}
         while True:
@@ -118,12 +125,6 @@ class UdpServer(Server):
                     client.connection_lost(None)
             for addr in counters.keys() - self.clients.keys():
                 counters.pop(addr)
-
-    def connection_made(self, transport):
-        self.transport = transport
-
-    def connection_lost(self, exc):
-        pass
 
     def datagram_received(self, data, addr):
         if addr not in self.clients:
@@ -148,6 +149,7 @@ class UdpClient(Forwarder):
         self.addr = addr
 
     def send(self, data):
+        self.datagram_counter += 1
         self.transport.sendto(data, self.addr)
 
 
