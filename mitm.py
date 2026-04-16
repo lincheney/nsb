@@ -1,5 +1,6 @@
 import re
 import os
+import asyncio
 import ipaddress
 import inspect
 import typing
@@ -50,12 +51,6 @@ class Matchers:
         if isinstance(data, Question):
             return regex.search(data.name)
 
-        x=[
-        data.client_conn.tls and data.client_conn.sni,
-data.server_conn.address and DNS_CACHE.get(data.server_conn.address[0]),
-            hasattr(data, 'request') and getattr(data.request, 'host', None),
-            hasattr(data, 'request') and getattr(data.request, 'pretty_host', None),
-        ]
         if data.client_conn.tls and data.client_conn.sni is not None:
             return regex.search(data.client_conn.sni)
         elif data.server_conn.address and (names := DNS_CACHE.get(data.server_conn.address[0])):
@@ -87,8 +82,11 @@ for collection, func in [
         if not hasattr(Matchers, f.code):
             setattr(Matchers, f.code, partial(func, f))
 
+ASK_LOCK = asyncio.Lock()
+
 class Actions:
-    def block(data):
+
+    async def block(data):
         if isinstance(data, DNSFlow):
             # dns flows are not killable
             data.response = data.request.fail(mitmproxy.dns.response_codes.NXDOMAIN)
@@ -102,8 +100,31 @@ class Actions:
         else:
             raise NotImplementedError(data)
 
-    def allow(data):
+    async def allow(data):
         pass
+
+    async def ask(data):
+        if isinstance(data, DNSFlow):
+            # skip, you'll get asked later for each question
+            return
+        elif isinstance(data, Question):
+            descr = 'DNS ' + data.name
+        elif isinstance(data, mitmproxy.flow.HTTPFlow):
+            descr = f'HTTP {data.request.method.upper()} to {data.request.pretty_url}'
+        elif isinstance(data, mitmproxy.flow.Flow):
+            descr = f'{type(data).__name__.removesuffix('Flow')} to {data.server_conn.address[0]}:{data.server_conn.address[1]}'
+        else:
+            raise NotImplementedError(data)
+        msg = f'>>> {descr}\n>>> (a)llow / (b)lock? '
+
+        async with ASK_LOCK:
+            while True:
+                answer = await asyncio.get_running_loop().run_in_executor(None, input, msg)
+                match answer.strip().lower():
+                    case 'a'|'allow':
+                        return await Actions.allow(data)
+                    case 'b'|'block':
+                        return await Actions.block(data)
 
 class Parser:
     END_REGEX = re.compile('[&|]')
@@ -174,25 +195,22 @@ class Addon:
     def __init__(self):
         self.specs = []
 
-    def apply_specs(self, data):
+    async def apply_specs(self, data):
         try:
             if mitmproxy.ctx.options.nsb_block_direct_ip and self.is_direct_ip(data):
-                Actions.block(data)
-                return
+                return await Actions.block(data)
 
             if mitmproxy.ctx.options.nsb_block_domain_fronting and self.is_domain_fronting(data):
-                Actions.block(data)
-                return
+                return await Actions.block(data)
 
             for action, spec in self.specs:
                 if spec(data):
-                    action(data)
-                    return
+                    return await action(data)
         # nothing matched, block by default
         except Exception:
-            Actions.block(data)
+            await Actions.block(data)
             raise
-        Actions.block(data)
+        await Actions.block(data)
 
     def is_direct_ip(self, data):
         return isinstance(data, mitmproxy.flow.Flow) and data.server_conn.address[0] not in DNS_CACHE
@@ -251,11 +269,11 @@ class Addon:
     def client_disconnected(self, client: mitmproxy.connection.Client):
         '''A client connection has been closed (either by us or the client).'''
 
-    def server_connect(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
+    async def server_connect(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
         '''Mitmproxy is about to connect to a server. Note that a connection can correspond to multiple requests.'''
         '''Setting data.server.error kills the connection.'''
         #  print(f'''DEBUG(jawed) \t{data = }''', file=sys.__stderr__)
-        # self.apply_specs(data)
+        # await self.apply_specs(data)
 
     def server_connected(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
         '''Mitmproxy has connected to a server.'''
@@ -271,10 +289,10 @@ class Addon:
     def requestheaders(self, flow: mitmproxy.http.HTTPFlow):
         '''HTTP request headers were successfully read. At this point, the body is empty.'''
 
-    def request(self, flow: mitmproxy.http.HTTPFlow):
+    async def request(self, flow: mitmproxy.http.HTTPFlow):
         '''The full HTTP request has been read.'''
         '''Note: If request streaming is active, this event fires after the entire body has been streamed. HTTP trailers, if present, have not been transmitted to the server yet and can still be modified. Enabling streaming may cause unexpected event sequences: For example, response may now occur before request because the server replied with "413 Payload Too Large" during upload.'''
-        self.apply_specs(flow)
+        await self.apply_specs(flow)
 
     def responseheaders(self, flow: mitmproxy.http.HTTPFlow):
         '''HTTP response headers were successfully read. At this point, the body is empty.'''
@@ -304,11 +322,11 @@ class Addon:
     def http_connect_error(self, flow: mitmproxy.http.HTTPFlow):
         '''HTTP CONNECT has failed. This can happen when the upstream server is unreachable or proxy authentication is required. In contrast to the error hook, flow.error is not guaranteed to be set.'''
 
-    def dns_request(self, flow: mitmproxy.dns.DNSFlow):
+    async def dns_request(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS query has been received.'''
-        self.apply_specs(flow)
+        await self.apply_specs(flow)
         for q in flow.request.questions:
-            self.apply_specs(q)
+            await self.apply_specs(q)
         questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]
         if questions:
             flow.request.questions = questions
@@ -325,9 +343,9 @@ class Addon:
     def dns_error(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS error has occurred.'''
 
-    def tcp_start(self, flow: mitmproxy.tcp.TCPFlow):
+    async def tcp_start(self, flow: mitmproxy.tcp.TCPFlow):
         '''A TCP connection has started.'''
-        self.apply_specs(flow)
+        await self.apply_specs(flow)
 
     def tcp_message(self, flow: mitmproxy.tcp.TCPFlow):
         '''A TCP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
@@ -339,9 +357,9 @@ class Addon:
         '''A TCP error has occurred.'''
         '''Every TCP flow will receive either a tcp_error or a tcp_end event, but not both.'''
 
-    def udp_start(self, flow: mitmproxy.udp.UDPFlow):
+    async def udp_start(self, flow: mitmproxy.udp.UDPFlow):
         '''A UDP connection has started.'''
-        self.apply_specs(flow)
+        await self.apply_specs(flow)
 
     def udp_message(self, flow: mitmproxy.udp.UDPFlow):
         '''A UDP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
