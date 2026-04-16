@@ -77,15 +77,15 @@ class Server:
         if transport:
             inbound.connection_made(transport)
         proxy = factory(self.to_addr)
-        asyncio.create_task(self.forward(inbound, proxy))
+        self._forward_task = asyncio.create_task(self.forward(inbound, proxy))
         return inbound
 
     async def forward(self, inbound, proxy):
         await self.start_fn()
         await self.connect_proxy(proxy)
+        forward = asyncio.create_task(self.forward(inbound, proxy))
+        backward = asyncio.create_task(self.forward(proxy, inbound))
         try:
-            forward = asyncio.create_task(inbound.forward_to(proxy))
-            backward = asyncio.create_task(proxy.forward_to(inbound))
             await asyncio.gather(forward, backward)
         finally:
             forward.cancel()
@@ -286,21 +286,28 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             self.mitm_dns_port = get_free_port()
             self.mitm_wg_port = get_free_port()
 
-            asyncio.create_task(UdpServer((LOCALHOST, self.wg_port), (LOCALHOST, self.mitm_wg_port), self.start_mitmproxy).serve()),
-            asyncio.create_task(UdpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
-            asyncio.create_task(TcpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
+            tasks = [
+                asyncio.create_task(UdpServer((LOCALHOST, self.wg_port), (LOCALHOST, self.mitm_wg_port), self.start_mitmproxy).serve()),
+                asyncio.create_task(UdpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
+                asyncio.create_task(TcpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
+            ]
 
         else:
             # launch mitmproxy first to create the wg config
             self.mitm_wg_port = self.wg_port
             self.mitm_dns_port = self.dns_port
-            asyncio.create_task(await self.start_mitmproxy())
+            tasks = [
+                asyncio.create_task(await self.start_mitmproxy()),
+            ]
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
             pasta = await self.start_pasta()
 
-        return await pasta.wait()
+        rc = await pasta.wait()
+        for t in tasks:
+            t.cancel()
+        return rc
 
 async def main():
     args = []
