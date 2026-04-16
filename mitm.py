@@ -180,6 +180,10 @@ class Addon:
                 Actions.block(data)
                 return
 
+            if mitmproxy.ctx.options.nsb_block_domain_fronting and self.is_domain_fronting(data):
+                Actions.block(data)
+                return
+
             for action, spec in self.specs:
                 if spec(data):
                     action(data)
@@ -193,11 +197,29 @@ class Addon:
     def is_direct_ip(self, data):
         return isinstance(data, mitmproxy.flow.Flow) and data.server_conn.address[0] not in DNS_CACHE
 
+    def is_domain_fronting(self, data):
+        if not isinstance(data, mitmproxy.flow.Flow):
+            return False
+
+        if not (dns := DNS_CACHE.get(data.server_conn.address[0])):
+            return True
+
+        sni = None
+        if data.client_conn.tls and not (sni := data.client_conn.sni):
+            return True
+
+        header = None
+        if isinstance(data, mitmproxy.flow.HTTPFlow) and not (header := data.request.headers.get('host')):
+            return True
+
+        return (sni is None or sni in dns) and (header is None or header in dns)
+
     def load(self, loader: mitmproxy.addonmanager.Loader):
         '''Called when an addon is first loaded. This event receives a Loader object, which contains methods for adding options and commands. This method is where the addon configures itself.'''
         loader.add_option("nsb_spec", collections.abc.Sequence[str], [], 'nsb filter spec')
         loader.add_option("nsb_readiness_fd", typing.Optional[int], None, 'nsb readiness fd (internal use)')
         loader.add_option("nsb_block_direct_ip", bool, True, 'block direct ip access not resolved via dns')
+        loader.add_option("nsb_block_domain_fronting", bool, True, 'block domain fronting (mismatched dns/sni/host)')
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
