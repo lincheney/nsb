@@ -220,9 +220,20 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             os.close(w)
             reader = asyncio.StreamReader()
             await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(r, 'rb'))
-            buf = await reader.read()
-            if buf != b'1':
+
+            read_task = asyncio.create_task(reader.read())
+            wait_task = asyncio.create_task(proc.wait())
+            done, pending = await asyncio.wait([read_task, wait_task], return_when=asyncio.FIRST_COMPLETED)
+
+            if wait_task in done:
+                # mitmdump exited
+                read_task.cancel()
+                raise Exception(f'mitmdump exited with code {proc.returncode} before becoming ready')
+
+            wait_task.cancel()
+            if read_task.result() != b'1':
                 raise Exception('mitmdump failed to start properly')
+
         except Exception:
             proc.terminate()
             raise
