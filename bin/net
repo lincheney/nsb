@@ -224,8 +224,8 @@ mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
 umount /tmp
 
 # drop net admin and reset user
-# setpriv --bounding-set -net_admin -- \\
-# unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
+setpriv --bounding-set -net_admin -- \\
+unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 {command}
 '''
 
