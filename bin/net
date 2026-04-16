@@ -132,17 +132,17 @@ class UdpServer(Server, BaseClient):
         self.transport.close = lambda: 0
         await self.gc_clients()
 
-    async def gc_clients(self, interval=2):
+    async def gc_clients(self, interval=20):
         # mitmproxy has a udp timeout of 20s
         counters = {}
         while True:
             await asyncio.sleep(interval)
             for addr, client in self.clients.items():
-                if addr not in counters:
-                    counters[addr] = client.activity_counter
-                elif counters[addr] == client.activity_counter:
+                if counters.get(addr, None) == client.activity_counter:
                     # counter hasn't changed, close it
                     client.connection_lost(None)
+                else:
+                    counters[addr] = client.activity_counter
             for addr in counters.keys() - self.clients.keys():
                 counters.pop(addr)
 
