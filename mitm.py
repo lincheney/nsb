@@ -176,6 +176,10 @@ class Addon:
 
     def apply_specs(self, data):
         try:
+            if mitmproxy.ctx.options.nsb_block_direct_ip and self.is_direct_ip(data):
+                Actions.block(data)
+                return
+
             for action, spec in self.specs:
                 if spec(data):
                     action(data)
@@ -186,10 +190,14 @@ class Addon:
             raise
         Actions.block(data)
 
+    def is_direct_ip(self, data):
+        return isinstance(data, mitmproxy.flow.Flow) and data.server_conn.address[0] not in DNS_CACHE
+
     def load(self, loader: mitmproxy.addonmanager.Loader):
         '''Called when an addon is first loaded. This event receives a Loader object, which contains methods for adding options and commands. This method is where the addon configures itself.'''
         loader.add_option("nsb_spec", collections.abc.Sequence[str], [], 'nsb filter spec')
         loader.add_option("nsb_readiness_fd", typing.Optional[int], None, 'nsb readiness fd (internal use)')
+        loader.add_option("nsb_block_direct_ip", bool, True, 'block direct ip access not resolved via dns')
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
@@ -201,6 +209,7 @@ class Addon:
 
     def configure(self, updated: set[str]):
         '''Called when configuration changes. The updated argument is a set-like object containing the keys of all changed options. This event is called during startup with all options in the updated set.'''
+
         if "nsb_spec" in updated:
             self.specs.clear()
             for spec in mitmproxy.ctx.options.nsb_spec:
