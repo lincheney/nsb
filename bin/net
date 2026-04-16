@@ -17,52 +17,65 @@ def get_free_port():
         s.bind(("", 0))
         return s.getsockname()[1]
 
+def create_task(fut):
+    task = asyncio.create_task(fut)
+    task.add_done_callback(lambda x: x.cancelled() or x.result())
+    return task
+
 class BaseClient:
     def __init__(self):
         self.queue = asyncio.Queue()
+        self.shutdown = False
         self.transport = None
-        self.datagram_counter = 0
 
     async def recv(self):
         return await self.queue.get()
 
     def enqueue(self, value):
-        try:
+        if not self.shutdown:
             self.queue.put_nowait(value)
-        except asyncio.QueueShutDown:
-            pass
 
     def connection_made(self, transport):
         self.transport = transport
+
     def connection_lost(self, exc):
+        self.shutdown = True
         self.queue.shutdown()
 
-    # tcp
+class TcpClient(BaseClient):
+    async def connect_to(self, addr):
+        await asyncio.get_running_loop().create_connection(lambda: self, *addr)
+
+    def send(self, data):
+        self.transport.write(data)
+
     def eof_received(self):
         self.enqueue(None)
+
     def data_received(self, data):
         self.enqueue(data)
 
-    # udp
+
+class UdpClient(BaseClient):
+    def __init__(self, addr):
+        super().__init__()
+        self.addr = addr
+        self.activity_counter = 0
+
+    async def connect_to(self, addr):
+        await asyncio.get_running_loop().create_datagram_endpoint(lambda: self, remote_addr=addr)
+
     def error_received(self, exc):
-        pass
+        pass # TODO
+
     def datagram_received(self, data, addr):
-        self.datagram_counter += 1
+        self.activity_counter += 1
         self.enqueue(data)
 
-class Forwarder(BaseClient):
-    async def forward_to(self, client):
-        while True:
-            try:
-                data = await self.recv()
-            except asyncio.QueueShutDown:
-                client.transport.close()
-                break
-            else:
-                if data is None:
-                    client.transport.write_eof()
-                else:
-                    client.send(data)
+    def send(self, data):
+        self.activity_counter += 1
+        self.transport.sendto(data, self.addr)
+
 
 class Server:
     def __init__(self, from_addr, to_addr, start_fn):
@@ -77,35 +90,39 @@ class Server:
         if transport:
             inbound.connection_made(transport)
         proxy = factory(self.to_addr)
-        self._forward_task = asyncio.create_task(self.forward(inbound, proxy))
+        self._forward_task = create_task(self.forward_between(inbound, proxy))
         return inbound
 
-    async def forward(self, inbound, proxy):
-        await self.start_fn()
-        await self.connect_proxy(proxy)
-        forward = asyncio.create_task(self.forward(inbound, proxy))
-        backward = asyncio.create_task(self.forward(proxy, inbound))
+    async def forward_between(self, inbound, proxy):
         try:
-            await asyncio.gather(forward, backward)
+            await self.start_fn()
+            await proxy.connect_to(self.to_addr)
+            async with asyncio.TaskGroup() as tasks:
+                forward = tasks.create_task(self.forward(inbound, proxy))
+                backward = tasks.create_task(self.forward(proxy, inbound))
         finally:
-            forward.cancel()
-            backward.cancel()
             inbound.transport.close()
-            proxy.transport.close()
+            if proxy.transport:
+                proxy.transport.close()
+
+    async def forward(self, reader, writer):
+        while True:
+            try:
+                data = await reader.recv()
+            except asyncio.QueueShutDown:
+                writer.transport.close()
+                break
+            else:
+                if data is None:
+                    writer.transport.write_eof()
+                else:
+                    writer.send(data)
 
 class TcpServer(Server):
     async def serve(self):
-        server = await self.loop.create_server(lambda: self.make_client(None, None, lambda addr: TcpClient()), *self.from_addr)
+        server = await self.loop.create_server(lambda: self.make_client(None, None, lambda addr: TcpClient), *self.from_addr)
         async with server:
             await server.serve_forever()
-
-    async def connect_proxy(self, proxy):
-        await asyncio.get_running_loop().create_connection(lambda: proxy, *self.to_addr)
-
-class TcpClient(Forwarder):
-    def send(self, data):
-        self.transport.write(data)
-
 
 class UdpServer(Server, BaseClient):
     async def serve(self):
@@ -113,44 +130,38 @@ class UdpServer(Server, BaseClient):
         await self.loop.create_datagram_endpoint(lambda: self, local_addr=self.from_addr)
         # do not allow the server transport to be closed
         self.transport.close = lambda: 0
+        await self.gc_clients()
+
+    async def gc_clients(self, interval=2):
         # mitmproxy has a udp timeout of 20s
         counters = {}
         while True:
-            await asyncio.sleep(20)
+            await asyncio.sleep(interval)
             for addr, client in self.clients.items():
                 if addr not in counters:
-                    counters[addr] = client.datagram_counter
-                elif counters[addr] == client.datagram_counter:
+                    counters[addr] = client.activity_counter
+                elif counters[addr] == client.activity_counter:
                     # counter hasn't changed, close it
                     client.connection_lost(None)
             for addr in counters.keys() - self.clients.keys():
                 counters.pop(addr)
+
+    def error_received(self, exc):
+        pass # TODO
 
     def datagram_received(self, data, addr):
         if addr not in self.clients:
             self.clients[addr] = self.make_client(self.transport, addr)
         self.clients[addr].datagram_received(data, addr)
 
-    def make_client(self, transport, addr):
-        return super().make_client(transport, addr, UdpClient)
+    def make_client(self, transport, addr, factory=UdpClient):
+        return super().make_client(transport, addr, factory)
 
-    async def connect_proxy(self, proxy):
-        await self.loop.create_datagram_endpoint(lambda: proxy, remote_addr=self.to_addr)
-
-    async def forward(self, inbound, proxy):
+    async def forward_between(self, inbound, proxy):
         try:
-            await super().forward(inbound, proxy)
+            return await super().forward_between(inbound, proxy)
         finally:
             self.clients.pop(inbound.addr, None)
-
-class UdpClient(Forwarder):
-    def __init__(self, addr):
-        super().__init__()
-        self.addr = addr
-
-    def send(self, data):
-        self.datagram_counter += 1
-        self.transport.sendto(data, self.addr)
 
 
 class Handler:
@@ -213,8 +224,8 @@ mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
 umount /tmp
 
 # drop net admin and reset user
-setpriv --bounding-set -net_admin -- \\
-unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
+# setpriv --bounding-set -net_admin -- \\
+# unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 {command}
 '''
 
@@ -259,10 +270,10 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         query = b'\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00' + b'\x00' + b'\x00\x01\x00\x01'
 
         addr = (LOCALHOST, self.mitm_dns_port)
-        client = BaseClient()
-        transport, protocol = await asyncio.get_running_loop().create_datagram_endpoint(lambda: client, remote_addr=addr)
+        client = UdpClient(addr)
+        await client.connect_to(addr)
         while True:
-            client.transport.sendto(query, addr)
+            client.send(query)
             try:
                 await asyncio.wait_for(client.recv(), timeout=0.1)
                 break
@@ -273,13 +284,15 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
     def start_mitmproxy(self):
         if self.mitm is None:
-            self.mitm = asyncio.create_task(self._start_mitmproxy())
+            self.mitm = create_task(self._start_mitmproxy())
         return self.mitm
 
     def mitmproxy_is_finished(self):
         return self.mitm and self.mitm.done() and self.mitm.result().returncode is not None
 
     async def main(self):
+        tasks = []
+
         if self.wg_conf.exists():
             pasta = await self.start_pasta()
 
@@ -287,18 +300,16 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             self.mitm_wg_port = get_free_port()
 
             tasks = [
-                asyncio.create_task(UdpServer((LOCALHOST, self.wg_port), (LOCALHOST, self.mitm_wg_port), self.start_mitmproxy).serve()),
-                asyncio.create_task(UdpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
-                asyncio.create_task(TcpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
+                create_task(UdpServer((LOCALHOST, self.wg_port), (LOCALHOST, self.mitm_wg_port), self.start_mitmproxy).serve()),
+                create_task(UdpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
+                create_task(TcpServer((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy).serve()),
             ]
 
         else:
             # launch mitmproxy first to create the wg config
             self.mitm_wg_port = self.wg_port
             self.mitm_dns_port = self.dns_port
-            tasks = [
-                asyncio.create_task(await self.start_mitmproxy()),
-            ]
+            await self.start_mitmproxy()
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
