@@ -120,7 +120,7 @@ class Server:
 
 class TcpServer(Server):
     async def serve(self):
-        server = await self.loop.create_server(lambda: self.make_client(None, None, lambda addr: TcpClient), *self.from_addr)
+        server = await self.loop.create_server(lambda: self.make_client(None, None, lambda addr: TcpClient()), *self.from_addr)
         async with server:
             await server.serve_forever()
 
