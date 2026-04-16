@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import inspect
 import typing
+import logging
 import collections.abc
 from functools import cache, wraps, partial
 from mitmproxy.proxy.server_hooks import ServerConnectionHookData
@@ -247,24 +248,31 @@ class Addon:
             os.close(fd)
             mitmproxy.ctx.options.nsb_readiness_fd = None
 
-    def add_spec(self, spec: str):
-        action, _, spec = spec.partition(':')
-        if action == 'include':
-            with open(spec) as file:
-                for line in file:
-                    self.add_spec(line)
-        else:
-            action = getattr(Actions, action)
-            spec = Parser(spec).parse()
-            self.specs.append((action, spec))
+    def add_spec(self, string: str):
+        try:
+            action, _, spec = string.partition(':')
+            if action == 'include':
+                with open(spec) as file:
+                    for line in file:
+                        self.add_spec(line)
+            else:
+                action = getattr(Actions, action)
+                spec = Parser(spec).parse()
+                self.specs.append((action, spec))
+        except Exception:
+            logging.warning('Failed to parse spec %s', string)
+            raise
 
     def configure(self, updated: set[str]):
         '''Called when configuration changes. The updated argument is a set-like object containing the keys of all changed options. This event is called during startup with all options in the updated set.'''
 
         if "nsb_spec" in updated:
             self.specs.clear()
-            for spec in mitmproxy.ctx.options.nsb_spec:
-                self.add_spec(spec)
+            try:
+                for spec in mitmproxy.ctx.options.nsb_spec:
+                    self.add_spec(spec)
+            except Exception:
+                pass
 
     def done(self):
         '''Called when the addon shuts down, either by being removed from the mitmproxy instance, or when mitmproxy itself shuts down. On shutdown, this event is called after the event loop is terminated, guaranteeing that it will be the final event an addon sees. Note that log handlers are shut down at this point, so calls to log functions will produce no output.'''
