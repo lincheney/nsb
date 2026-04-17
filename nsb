@@ -108,15 +108,17 @@ class Handler:
 
     async def run_pasta(self):
         command = ' '.join(map(shlex.quote, self.extras))
+        python = shlex.quote(sys.executable)
+        wg_conf = shlex.quote(str(self.wg_conf))
 
         script_sh = f'''
 set -eu -o pipefail
 # bc you may have no jq
-extract_json() {{ {shlex.quote(sys.executable)} -c 'import sys, json; print(json.load(sys.stdin)[sys.argv[1]])' "$@"; }}
+extract_json() {{ {python} -c 'import sys, json; print(json.load(sys.stdin)[sys.argv[1]])' "$@"; }}
 # set up wireguard
 ip link add dev {self.wg_iface} type wireguard
 ip address add dev {self.wg_iface} {self.wg_subnet}
-wg set {self.wg_iface} private-key <(<{shlex.quote(str(self.wg_conf))} extract_json client_key) peer "$(<{shlex.quote(str(self.wg_conf))} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{self.wg_port}
+wg set {self.wg_iface} private-key <(<{wg_conf} extract_json client_key) peer "$(<{wg_conf} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{self.wg_port}
 ip link set up dev {self.wg_iface}
 
 # route everything through wireguard
