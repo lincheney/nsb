@@ -191,7 +191,10 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             'mitmdump',
             '--mode', f'wireguard@{LOCALHOST}:{self.mitm_wg_port}',
             '--mode', f'dns@{LOCALHOST}:{self.mitm_dns_port}',
+            '--scripts', Path(__file__).parent/'mitm.py',
             '--show-ignored-hosts',
+            '--set=nsb_spec=allow:~dns & ~dnst ^a$ & ~d github.com',
+            '--set=nsb_spec=allow:~m get & ~d github.com',
             #  '--showhost',
             *self.args,
         )

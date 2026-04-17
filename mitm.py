@@ -2,6 +2,7 @@ import re
 import sys
 import ipaddress
 import inspect
+import collections.abc
 from functools import cache, wraps, partial, Placeholder
 from mitmproxy.proxy.server_hooks import ServerConnectionHookData
 from mitmproxy.dns import DNSFlow, Question
@@ -166,194 +167,192 @@ class Parser:
             return args[0]
         return partial(func, args)
 
-specs = []
-dns_cache = {}
+class Addon:
+    def __init__(self):
+        self.specs = []
+        self.dns_cache = {}
 
-def apply_specs(data):
-    try:
-        for action, spec in specs:
-            if spec(data):
-                action(data)
-                return
-    # nothing matched, block by default
-    except Exception:
+    def apply_specs(self, data):
+        try:
+            for action, spec in self.specs:
+                if spec(data):
+                    action(data)
+                    return
+        # nothing matched, block by default
+        except Exception:
+            Actions.block(data)
+            raise
         Actions.block(data)
-        raise
-    Actions.block(data)
 
-def load(loader: mitmproxy.addonmanager.Loader):
-    '''Called when an addon is first loaded. This event receives a Loader object, which contains methods for adding options and commands. This method is where the addon configures itself.'''
-    specs.clear()
-    actions = [
-        # 'allow:~dns & ~d github.com',
-        # 'block:~d google.com',
-        'allow:~dns & ~dnst ^a$ & ~d github.com',
-        'allow:~m get & ~d github.com',
-        #  'block:~d github.com',
-        #  'allow:~dnsq github.com',
-        # 'block:~d httpbin.org & ~m get',
-        #  'block:! (~dns | ~d .)',
-    ]
-    for action in actions:
-        action, _, spec = action.partition(':')
-        specs.append((getattr(Actions, action), Parser(spec).parse()))
+    def load(self, loader: mitmproxy.addonmanager.Loader):
+        '''Called when an addon is first loaded. This event receives a Loader object, which contains methods for adding options and commands. This method is where the addon configures itself.'''
+        loader.add_option("nsb_spec", collections.abc.Sequence[str], [], 'nsb filter spec')
 
-def running():
-    '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
+    def running(self):
+        '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
 
-def configure(updated: set[str]):
-    '''Called when configuration changes. The updated argument is a set-like object containing the keys of all changed options. This event is called during startup with all options in the updated set.'''
+    def configure(self, updated: set[str]):
+        '''Called when configuration changes. The updated argument is a set-like object containing the keys of all changed options. This event is called during startup with all options in the updated set.'''
+        if "nsb_spec" in updated:
+            self.specs.clear()
+            for spec in mitmproxy.ctx.options.nsb_spec:
+                action, _, spec = spec.partition(':')
+                action = getattr(Actions, action)
+                spec = Parser(spec).parse()
+                self.specs.append((action, spec))
 
-def done():
-    '''Called when the addon shuts down, either by being removed from the mitmproxy instance, or when mitmproxy itself shuts down. On shutdown, this event is called after the event loop is terminated, guaranteeing that it will be the final event an addon sees. Note that log handlers are shut down at this point, so calls to log functions will produce no output.'''
-    '''Connection Events'''
+    def done(self):
+        '''Called when the addon shuts down, either by being removed from the mitmproxy instance, or when mitmproxy itself shuts down. On shutdown, this event is called after the event loop is terminated, guaranteeing that it will be the final event an addon sees. Note that log handlers are shut down at this point, so calls to log functions will produce no output.'''
+        '''Connection Events'''
 
-def client_connected(client: mitmproxy.connection.Client):
-    '''A client has connected to mitmproxy. Note that a connection can correspond to multiple HTTP requests.'''
-    '''Setting client.error kills the connection.'''
+    def client_connected(self, client: mitmproxy.connection.Client):
+        '''A client has connected to mitmproxy. Note that a connection can correspond to multiple HTTP requests.'''
+        '''Setting client.error kills the connection.'''
 
-def client_disconnected(client: mitmproxy.connection.Client):
-    '''A client connection has been closed (either by us or the client).'''
+    def client_disconnected(self, client: mitmproxy.connection.Client):
+        '''A client connection has been closed (either by us or the client).'''
 
-def server_connect(data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
-    '''Mitmproxy is about to connect to a server. Note that a connection can correspond to multiple requests.'''
-    '''Setting data.server.error kills the connection.'''
-    print(f'''DEBUG(jawed) \t{data = }''', file=sys.__stderr__)
-    # apply_specs(data)
+    def server_connect(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
+        '''Mitmproxy is about to connect to a server. Note that a connection can correspond to multiple requests.'''
+        '''Setting data.server.error kills the connection.'''
+        #  print(f'''DEBUG(jawed) \t{data = }''', file=sys.__stderr__)
+        # self.apply_specs(data)
 
-def server_connected(data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
-    '''Mitmproxy has connected to a server.'''
-    print(f'''DEBUG(iffier)\t{data = }''', file=sys.__stderr__)
+    def server_connected(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
+        '''Mitmproxy has connected to a server.'''
+        #  print(f'''DEBUG(iffier)\t{data = }''', file=sys.__stderr__)
 
-def server_disconnected(data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
-    '''A server connection has been closed (either by us or the server).'''
+    def server_disconnected(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
+        '''A server connection has been closed (either by us or the server).'''
 
-def server_connect_error(data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
-    '''Mitmproxy failed to connect to a server.'''
-    '''Every server connection will receive either a server_connected or a server_connect_error event, but not both.'''
+    def server_connect_error(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
+        '''Mitmproxy failed to connect to a server.'''
+        '''Every server connection will receive either a server_connected or a server_connect_error event, but not both.'''
 
-def requestheaders(flow: mitmproxy.http.HTTPFlow):
-    '''HTTP request headers were successfully read. At this point, the body is empty.'''
+    def requestheaders(self, flow: mitmproxy.http.HTTPFlow):
+        '''HTTP request headers were successfully read. At this point, the body is empty.'''
 
-def request(flow: mitmproxy.http.HTTPFlow):
-    '''The full HTTP request has been read.'''
-    '''Note: If request streaming is active, this event fires after the entire body has been streamed. HTTP trailers, if present, have not been transmitted to the server yet and can still be modified. Enabling streaming may cause unexpected event sequences: For example, response may now occur before request because the server replied with "413 Payload Too Large" during upload.'''
-    apply_specs(flow)
+    def request(self, flow: mitmproxy.http.HTTPFlow):
+        '''The full HTTP request has been read.'''
+        '''Note: If request streaming is active, this event fires after the entire body has been streamed. HTTP trailers, if present, have not been transmitted to the server yet and can still be modified. Enabling streaming may cause unexpected event sequences: For example, response may now occur before request because the server replied with "413 Payload Too Large" during upload.'''
+        self.apply_specs(flow)
 
-def responseheaders(flow: mitmproxy.http.HTTPFlow):
-    '''HTTP response headers were successfully read. At this point, the body is empty.'''
+    def responseheaders(self, flow: mitmproxy.http.HTTPFlow):
+        '''HTTP response headers were successfully read. At this point, the body is empty.'''
 
-def response(flow: mitmproxy.http.HTTPFlow):
-    '''The full HTTP response has been read.'''
-    '''Note: If response streaming is active, this event fires after the entire body has been streamed. HTTP trailers, if present, have not been transmitted to the client yet and can still be modified.'''
+    def response(self, flow: mitmproxy.http.HTTPFlow):
+        '''The full HTTP response has been read.'''
+        '''Note: If response streaming is active, this event fires after the entire body has been streamed. HTTP trailers, if present, have not been transmitted to the client yet and can still be modified.'''
 
-def error(flow: mitmproxy.http.HTTPFlow):
-    '''An HTTP error has occurred, e.g. invalid server responses, or interrupted connections. This is distinct from a valid server HTTP error response, which is simply a response with an HTTP error code.'''
-    '''Every flow will receive either an error or an response event, but not both.'''
+    def error(self, flow: mitmproxy.http.HTTPFlow):
+        '''An HTTP error has occurred, e.g. invalid server responses, or interrupted connections. This is distinct from a valid server HTTP error response, which is simply a response with an HTTP error code.'''
+        '''Every flow will receive either an error or an response event, but not both.'''
 
-def http_connect(flow: mitmproxy.http.HTTPFlow):
-    '''An HTTP CONNECT request was received. This event can be ignored for most practical purposes.'''
-    '''This event only occurs in regular and upstream proxy modes when the client instructs mitmproxy to open a connection to an upstream host. Setting a non 2xx response on the flow will return the response to the client and abort the connection.'''
-    '''CONNECT requests are HTTP proxy instructions for mitmproxy itself and not forwarded. They do not generate the usual HTTP handler events, but all requests going over the newly opened connection will.'''
+    def http_connect(self, flow: mitmproxy.http.HTTPFlow):
+        '''An HTTP CONNECT request was received. This event can be ignored for most practical purposes.'''
+        '''This event only occurs in regular and upstream proxy modes when the client instructs mitmproxy to open a connection to an upstream host. Setting a non 2xx response on the flow will return the response to the client and abort the connection.'''
+        '''CONNECT requests are HTTP proxy instructions for mitmproxy itself and not forwarded. They do not generate the usual HTTP handler events, but all requests going over the newly opened connection will.'''
 
-def http_connect_upstream(flow: mitmproxy.http.HTTPFlow):
-    '''An HTTP CONNECT request is about to be sent to an upstream proxy. This event can be ignored for most practical purposes.'''
-    '''This event can be used to set custom authentication headers for upstream proxies.'''
-    '''CONNECT requests do not generate the usual HTTP handler events, but all requests going over the newly opened connection will.'''
+    def http_connect_upstream(self, flow: mitmproxy.http.HTTPFlow):
+        '''An HTTP CONNECT request is about to be sent to an upstream proxy. This event can be ignored for most practical purposes.'''
+        '''This event can be used to set custom authentication headers for upstream proxies.'''
+        '''CONNECT requests do not generate the usual HTTP handler events, but all requests going over the newly opened connection will.'''
 
-def http_connected(flow: mitmproxy.http.HTTPFlow):
-    '''HTTP CONNECT was successful'''
-    '''This may fire before an upstream connection has been established if connection_strategy is set to lazy (default)'''
+    def http_connected(self, flow: mitmproxy.http.HTTPFlow):
+        '''HTTP CONNECT was successful'''
+        '''This may fire before an upstream connection has been established if connection_strategy is set to lazy (self, default)'''
 
-def http_connect_error(flow: mitmproxy.http.HTTPFlow):
-    '''HTTP CONNECT has failed. This can happen when the upstream server is unreachable or proxy authentication is required. In contrast to the error hook, flow.error is not guaranteed to be set.'''
+    def http_connect_error(self, flow: mitmproxy.http.HTTPFlow):
+        '''HTTP CONNECT has failed. This can happen when the upstream server is unreachable or proxy authentication is required. In contrast to the error hook, flow.error is not guaranteed to be set.'''
 
-def dns_request(flow: mitmproxy.dns.DNSFlow):
-    '''A DNS query has been received.'''
-    apply_specs(flow)
-    for q in flow.request.questions:
-        apply_specs(q)
-    questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]
-    if questions:
-        flow.request.questions = questions
-    else:
-        flow.response = flow.request.fail(mitmproxy.dns.response_codes.NXDOMAIN)
+    def dns_request(self, flow: mitmproxy.dns.DNSFlow):
+        '''A DNS query has been received.'''
+        self.apply_specs(flow)
+        for q in flow.request.questions:
+            self.apply_specs(q)
+        questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]
+        if questions:
+            flow.request.questions = questions
+        else:
+            flow.response = flow.request.fail(mitmproxy.dns.response_codes.NXDOMAIN)
 
-def dns_response(flow: mitmproxy.dns.DNSFlow):
-    '''A DNS response has been received or set.'''
-    for answer in flow.response.answers:
-        if answer.type in (mitmproxy.dns.types.A, mitmproxy.dns.types.AAAA):
-            ip = str(ipaddress.ip_address(answer.data))
-            dns_cache.setdefault(ip, set()).add(answer.name)
+    def dns_response(self, flow: mitmproxy.dns.DNSFlow):
+        '''A DNS response has been received or set.'''
+        for answer in flow.response.answers:
+            if answer.type in (mitmproxy.dns.types.A, mitmproxy.dns.types.AAAA):
+                ip = str(ipaddress.ip_address(answer.data))
+                self.dns_cache.setdefault(ip, set()).add(answer.name)
 
-def dns_error(flow: mitmproxy.dns.DNSFlow):
-    '''A DNS error has occurred.'''
+    def dns_error(self, flow: mitmproxy.dns.DNSFlow):
+        '''A DNS error has occurred.'''
 
-def tcp_start(flow: mitmproxy.tcp.TCPFlow):
-    '''A TCP connection has started.'''
-    apply_specs(flow)
+    def tcp_start(self, flow: mitmproxy.tcp.TCPFlow):
+        '''A TCP connection has started.'''
+        self.apply_specs(flow)
 
-def tcp_message(flow: mitmproxy.tcp.TCPFlow):
-    '''A TCP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
+    def tcp_message(self, flow: mitmproxy.tcp.TCPFlow):
+        '''A TCP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
 
-def tcp_end(flow: mitmproxy.tcp.TCPFlow):
-    '''A TCP connection has ended.'''
+    def tcp_end(self, flow: mitmproxy.tcp.TCPFlow):
+        '''A TCP connection has ended.'''
 
-def tcp_error(flow: mitmproxy.tcp.TCPFlow):
-    '''A TCP error has occurred.'''
-    '''Every TCP flow will receive either a tcp_error or a tcp_end event, but not both.'''
+    def tcp_error(self, flow: mitmproxy.tcp.TCPFlow):
+        '''A TCP error has occurred.'''
+        '''Every TCP flow will receive either a tcp_error or a tcp_end event, but not both.'''
 
-def udp_start(flow: mitmproxy.udp.UDPFlow):
-    '''A UDP connection has started.'''
-    apply_specs(flow)
+    def udp_start(self, flow: mitmproxy.udp.UDPFlow):
+        '''A UDP connection has started.'''
+        self.apply_specs(flow)
 
-def udp_message(flow: mitmproxy.udp.UDPFlow):
-    '''A UDP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
+    def udp_message(self, flow: mitmproxy.udp.UDPFlow):
+        '''A UDP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
 
-def udp_end(flow: mitmproxy.udp.UDPFlow):
-    '''A UDP connection has ended.'''
+    def udp_end(self, flow: mitmproxy.udp.UDPFlow):
+        '''A UDP connection has ended.'''
 
-def udp_error(flow: mitmproxy.udp.UDPFlow):
-    '''A UDP error has occurred.'''
-    '''Every UDP flow will receive either a udp_error or a udp_end event, but not both.'''
+    def udp_error(self, flow: mitmproxy.udp.UDPFlow):
+        '''A UDP error has occurred.'''
+        '''Every UDP flow will receive either a udp_error or a udp_end event, but not both.'''
 
-def quic_start_client(data: mitmproxy.proxy.layers.quic._hooks.QuicTlsData):
-    '''TLS negotiation between mitmproxy and a client over QUIC is about to start.'''
-    '''An addon is expected to initialize data.settings. (by default, this is done by mitmproxy.addons.tlsconfig)'''
+    def quic_start_client(self, data: mitmproxy.proxy.layers.quic._hooks.QuicTlsData):
+        '''TLS negotiation between mitmproxy and a client over QUIC is about to start.'''
+        '''An addon is expected to initialize data.settings. (self, by default, this is done by mitmproxy.addons.tlsconfig)'''
 
-def quic_start_server(data: mitmproxy.proxy.layers.quic._hooks.QuicTlsData):
-    '''TLS negotiation between mitmproxy and a server over QUIC is about to start.'''
-    '''An addon is expected to initialize data.settings. (by default, this is done by mitmproxy.addons.tlsconfig)'''
+    def quic_start_server(self, data: mitmproxy.proxy.layers.quic._hooks.QuicTlsData):
+        '''TLS negotiation between mitmproxy and a server over QUIC is about to start.'''
+        '''An addon is expected to initialize data.settings. (self, by default, this is done by mitmproxy.addons.tlsconfig)'''
 
-def tls_clienthello(data: mitmproxy.tls.ClientHelloData):
-    '''Mitmproxy has received a TLS ClientHello message.'''
-    '''This hook decides whether a server connection is needed to negotiate TLS with the client (data.establish_server_tls_first)'''
+    def tls_clienthello(self, data: mitmproxy.tls.ClientHelloData):
+        '''Mitmproxy has received a TLS ClientHello message.'''
+        '''This hook decides whether a server connection is needed to negotiate TLS with the client (data.establish_server_tls_first)'''
 
-def tls_start_client(data: mitmproxy.tls.TlsData):
-    '''TLS negotation between mitmproxy and a client is about to start.'''
-    '''An addon is expected to initialize data.ssl_conn. (by default, this is done by mitmproxy.addons.tlsconfig)'''
+    def tls_start_client(self, data: mitmproxy.tls.TlsData):
+        '''TLS negotation between mitmproxy and a client is about to start.'''
+        '''An addon is expected to initialize data.ssl_conn. (self, by default, this is done by mitmproxy.addons.tlsconfig)'''
 
-def tls_start_server(data: mitmproxy.tls.TlsData):
-    '''TLS negotation between mitmproxy and a server is about to start.'''
-    '''An addon is expected to initialize data.ssl_conn. (by default, this is done by mitmproxy.addons.tlsconfig)'''
+    def tls_start_server(self, data: mitmproxy.tls.TlsData):
+        '''TLS negotation between mitmproxy and a server is about to start.'''
+        '''An addon is expected to initialize data.ssl_conn. (self, by default, this is done by mitmproxy.addons.tlsconfig)'''
 
-def tls_established_client(data: mitmproxy.tls.TlsData):
-    '''The TLS handshake with the client has been completed successfully.'''
+    def tls_established_client(self, data: mitmproxy.tls.TlsData):
+        '''The TLS handshake with the client has been completed successfully.'''
 
-def tls_established_server(data: mitmproxy.tls.TlsData):
-    '''The TLS handshake with the server has been completed successfully.'''
+    def tls_established_server(self, data: mitmproxy.tls.TlsData):
+        '''The TLS handshake with the server has been completed successfully.'''
 
-def tls_failed_client(data: mitmproxy.tls.TlsData):
-    '''The TLS handshake with the client has failed.'''
+    def tls_failed_client(self, data: mitmproxy.tls.TlsData):
+        '''The TLS handshake with the client has failed.'''
 
-def tls_failed_server(data: mitmproxy.tls.TlsData):
-    '''The TLS handshake with the server has failed.'''
+    def tls_failed_server(self, data: mitmproxy.tls.TlsData):
+        '''The TLS handshake with the server has failed.'''
 
-def websocket_start(flow: mitmproxy.http.HTTPFlow):
-    '''A WebSocket connection has commenced.'''
+    def websocket_start(self, flow: mitmproxy.http.HTTPFlow):
+        '''A WebSocket connection has commenced.'''
 
-def websocket_message(flow: mitmproxy.http.HTTPFlow):
-    '''Called when a WebSocket message is received from the client or server. The most recent message will be flow.messages[-1]. The message is user-modifiable. Currently there are two types of messages, corresponding to the BINARY and TEXT frame types.'''
+    def websocket_message(self, flow: mitmproxy.http.HTTPFlow):
+        '''Called when a WebSocket message is received from the client or server. The most recent message will be flow.messages[-1]. The message is user-modifiable. Currently there are two types of messages, corresponding to the BINARY and TEXT frame types.'''
 
-def websocket_end(flow: mitmproxy.http.HTTPFlow):
-    '''A WebSocket connection has ended. You can check flow.websocket.close_code to determine why it ended.'''
+    def websocket_end(self, flow: mitmproxy.http.HTTPFlow):
+        '''A WebSocket connection has ended. You can check flow.websocket.close_code to determine why it ended.'''
+
+addons = [Addon()]
