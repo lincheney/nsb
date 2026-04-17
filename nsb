@@ -43,50 +43,50 @@ async def tcp_forward_server(from_addr, to_addr, start_mitmproxy):
         await server.serve_forever()
 
 class UdpClient(asyncio.DatagramProtocol):
-    def __init__(self):
+    def __init__(self, queue=None, addr=None):
+        self.queue = queue or asyncio.Queue()
+        self.addr = addr
         self.activity_counter = 0
+        self.active = True
 
-    def connection_made(self, transport):
-        self.transport = transport
-
-    def send(self, data, addr):
-        self.activity_counter += 1
-        self.transport.sendto(data, addr)
-
-    def forward_to_transport(self, transport, addr, data, _addr):
-        self.activity_counter += 1
-        transport.sendto(data, addr)
+    def datagram_received(self, data, addr):
+        if self.active:
+            self.queue.put_nowait((self, data, addr))
 
 async def udp_forward_server(from_addr, to_addr, start_mitmproxy):
-    queue = asyncio.Queue()
-    transport, server = await asyncio.get_running_loop().create_datagram_endpoint(UdpClient, local_addr=from_addr)
-    server.datagram_received = lambda data, addr: queue.put_nowait((data, addr))
-    clients = {}
-    started = False
-    gc_task = create_task(udp_gc_clients(clients))
+    loop = asyncio.get_running_loop()
+    transport, server = await loop.create_datagram_endpoint(UdpClient, local_addr=from_addr)
+    proxies = {}
+    gc_task = create_task(udp_gc_clients(proxies))
     while True:
-        data, addr = await queue.get()
-        if not started:
-            await start_mitmproxy()
-            started = True
-        if addr not in clients:
-            _, clients[addr] = await asyncio.get_running_loop().create_datagram_endpoint(UdpClient, remote_addr=to_addr)
-            clients[addr].datagram_received = partial(clients[addr].forward_to_transport, transport, addr)
-        clients[addr].send(data, to_addr)
+        client, data, addr = await server.queue.get()
+        if client is server:
+            if addr not in proxies:
+                # make a new conn to mitmproxy
+                await start_mitmproxy()
+                proxies[addr] = await loop.create_datagram_endpoint(partial(UdpClient, server.queue, addr), remote_addr=to_addr)
+            proxies[addr][1].activity_counter += 1
+            proxies[addr][0].sendto(data, to_addr)
+        elif client.active:
+            # forward back to the client
+            client.activity_counter += 1
+            transport.sendto(data, client.addr)
 
-async def udp_gc_clients(clients, interval=20):
+async def udp_gc_clients(proxies, interval=20):
     # mitmproxy has a udp timeout of 20s
     counters = {}
     while True:
         await asyncio.sleep(interval)
-        for addr in counters.keys() | clients.keys():
-            if client := clients.get(addr):
-                if counters.get(addr, None) == client.activity_counter:
-                    clients.pop(addr)
-                else:
-                    counters[addr] = client.activity_counter
-            else:
+        for addr in counters.keys() | proxies.keys():
+            if addr not in proxies:
                 counters.pop(addr)
+            elif counters.get(addr) == proxies[addr][1].activity_counter:
+                # counter hasn't changed, assume inactivity
+                transport, client = proxies.pop(addr)
+                client.active = False
+                transport.close()
+            else:
+                counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
     def __init__(self, args, extras):
