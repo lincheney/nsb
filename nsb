@@ -148,6 +148,11 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 {command}
 '''
 
+        # technically i could just run the command directly inside pasta
+        # if we are already inside bwrap (bwrap -> pasta -> setpriv -> unshare -> command) it doesn't seem to work
+        # instead if we do (bwrap -> pasta -> CHILD) and (bwrap -> nsenter CHILD -> setpriv -> unshare -> command)
+        # this seems to work
+
         pasta = await asyncio.create_subprocess_exec(
             'pasta',
             '--ipv4-only',
