@@ -1,6 +1,5 @@
 #!/usr/bin/env -S python3 -SI
 
-import argparse
 import asyncio
 import shlex
 import sys
@@ -276,25 +275,34 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 t.cancel()
 
 async def main():
-    parser = argparse.ArgumentParser(description='Network sandbox')
-    parser.add_argument('--no-lazy-mitm', action='store_true', help='start mitmdump immediately')
-    parser.add_argument('--tcp-ports', default='none')
-    parser.add_argument('--udp-ports', default='none')
-    parser.add_argument('command', nargs=argparse.REMAINDER, help='command to run in the sandbox')
-
-    args, mitm_args = parser.parse_known_args()
-
-    # strip leading '--' from command if present
-    command = args.command
-    if command and command[0] == '--':
-        command = command[1:]
+    lazy = True
+    tcp_ports = 'none'
+    udp_ports = 'none'
+    mitm_args = []
+    # can't get argparse to work the way i want
+    command = None
+    for arg in sys.argv[1:]:
+        if command is not None:
+            command.append(arg)
+        elif arg == '--no-lazy-mitm':
+            lazy = False
+        elif arg.startswith('--tcp-ports='):
+            tcp_ports = arg.removeprefix('--tcp-ports=')
+        elif arg.startswith('--udp-ports='):
+            udp_ports = arg.removeprefix('--udp-ports=')
+        elif arg == '--':
+            command = []
+        elif arg.startswith('--'):
+            mitm_args.append(arg)
+        else:
+            command = [arg]
 
     handler = Handler(
         mitm_args,
         command,
-        lazy=not args.no_lazy_mitm,
-        tcp_ports=args.tcp_ports,
-        udp_ports=args.udp_ports
+        lazy=lazy,
+        tcp_ports=tcp_ports,
+        udp_ports=udp_ports
     )
     return await handler.main()
 
