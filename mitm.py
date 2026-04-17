@@ -1,11 +1,10 @@
 import re
 import os
-import sys
 import ipaddress
 import inspect
 import typing
 import collections.abc
-from functools import cache, wraps, partial, Placeholder
+from functools import cache, wraps, partial
 from mitmproxy.proxy.server_hooks import ServerConnectionHookData
 from mitmproxy.dns import DNSFlow, Question
 import mitmproxy.flowfilter
