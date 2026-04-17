@@ -137,7 +137,6 @@ mount -t tmpfs -o size=10M tmpfs /tmp
 # override some files
 echo nameserver {LOCALHOST} > /tmp/resolv.conf
 cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > /tmp/certs
-[[ -e /etc ]] || mount -t tmpfs -o size=100M tmpfs /etc
 mount --bind /tmp/resolv.conf /etc/resolv.conf -o ro
 mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
 umount /tmp
