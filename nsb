@@ -183,20 +183,12 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             pass_fds=[w],
         )
 
-        loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        def wait_for_readiness():
-            try:
-                fut.set_result(os.read(r, 1))
-            except Exception as e:
-                fut.set_exception(e)
-            finally:
-                os.close(r)
-                loop.remove_reader(r)
-
-        loop.add_reader(r, wait_for_readiness)
         try:
-            buf = await fut
+            os.close(w)
+            loop = asyncio.get_running_loop()
+            reader = asyncio.StreamReader()
+            await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(r, 'rb'))
+            buf = await reader.read()
             if buf != b'1':
                 raise Exception('mitmdump failed to start properly')
         except Exception:
