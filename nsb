@@ -117,7 +117,6 @@ class Handler:
         client_key = wg_conf['client_key']
         # i could do async but this is just easier
         server_key = subprocess.check_output(['wg', 'pubkey'], input=wg_conf['server_key'], text=True).strip('\n')
-        path = subprocess.check_output(['/usr/bin/getconf', 'PATH'], text=True).strip('\n')
 
         script_sh = f'''
 set -eu -o pipefail
@@ -157,7 +156,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 '''
 
         return await asyncio.create_subprocess_exec(
-            shutil.which('pasta', path=path),
+            'pasta',
             '--ipv4-only',
             '--address', self.tap_subnet.partition('/')[0],
             '--netmask', self.tap_subnet.partition('/')[2],
