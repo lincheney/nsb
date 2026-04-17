@@ -45,21 +45,12 @@ async def tcp_forward_server(from_addr, to_addr, start_mitmproxy):
     async with server:
         await server.serve_forever()
 
-class UdpClient:
+class UdpClient(asyncio.DatagramProtocol):
     def __init__(self):
         self.activity_counter = 0
 
     def connection_made(self, transport):
         self.transport = transport
-
-    def datagram_received(self, data, addr):
-        pass
-
-    def error_received(self, exc):
-        pass
-
-    def connection_lost(self, exc):
-        pass
 
     def send(self, data, addr):
         self.activity_counter += 1
@@ -84,7 +75,7 @@ async def udp_forward_server(from_addr, to_addr, start_mitmproxy):
         if addr not in clients:
             _, clients[addr] = await asyncio.get_running_loop().create_datagram_endpoint(UdpClient, remote_addr=to_addr)
             clients[addr].datagram_received = partial(clients[addr].forward_to_transport, transport, addr)
-        clients[addr].transport.sendto(data, to_addr)
+        clients[addr].send(data, to_addr)
 
 async def udp_gc_clients(clients, interval=20):
     # mitmproxy has a udp timeout of 20s
