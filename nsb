@@ -187,38 +187,42 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         )
 
     async def _start_mitmproxy(self):
+        # use this pipe to signal readiness
+        r, w = os.pipe()
+
         proc = await asyncio.create_subprocess_exec(
             'mitmdump',
             '--mode', f'wireguard@{LOCALHOST}:{self.mitm_wg_port}',
             '--mode', f'dns@{LOCALHOST}:{self.mitm_dns_port}',
             '--scripts', Path(__file__).parent/'mitm.py',
             '--show-ignored-hosts',
+            f'--set=nsb_readiness_fd={w}',
             '--set=nsb_spec=allow:~dns & ~dnst ^a$ & ~d github.com',
             '--set=nsb_spec=allow:~m get & ~d github.com',
             #  '--showhost',
             *self.args,
+            pass_fds=[w],
         )
 
-        # wait for the dns to be up
-        # for udp i don't know when the server is actually up
-        # which means any request we send too early will disappear
-        # and will have to wait for timeout+retry
-        # its faster to hold and send it only once we know its working
-
-        # i swear this works
-        query = b'\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00' + b'\x00' + b'\x00\x01\x00\x01'
-
-        addr = (LOCALHOST, self.mitm_dns_port)
-        queue = asyncio.Queue()
-        _, client = await asyncio.get_running_loop().create_datagram_endpoint(UdpClient, remote_addr=addr)
-        client.datagram_received = lambda data, addr: queue.put_nowait((data, addr))
-        while True:
-            client.transport.sendto(query, addr)
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        def wait_for_readiness():
             try:
-                await asyncio.wait_for(queue.get(), timeout=0.1)
-                break
-            except TimeoutError:
-                pass
+                fut.set_result(os.read(r, 1))
+            except Exception as e:
+                fut.set_exception(e)
+            finally:
+                os.close(r)
+                loop.remove_reader(r)
+
+        loop.add_reader(r, wait_for_readiness)
+        try:
+            buf = await fut
+            if buf != b'1':
+                raise Exception('mitmdump failed to start properly')
+        except Exception:
+            proc.terminate()
+            raise
 
         return proc
 

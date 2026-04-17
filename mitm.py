@@ -1,7 +1,9 @@
 import re
+import os
 import sys
 import ipaddress
 import inspect
+import typing
 import collections.abc
 from functools import cache, wraps, partial, Placeholder
 from mitmproxy.proxy.server_hooks import ServerConnectionHookData
@@ -187,9 +189,15 @@ class Addon:
     def load(self, loader: mitmproxy.addonmanager.Loader):
         '''Called when an addon is first loaded. This event receives a Loader object, which contains methods for adding options and commands. This method is where the addon configures itself.'''
         loader.add_option("nsb_spec", collections.abc.Sequence[str], [], 'nsb filter spec')
+        loader.add_option("nsb_readiness_fd", typing.Optional[int], None, 'nsb readiness fd (internal use)')
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
+        fd = mitmproxy.ctx.options.nsb_readiness_fd
+        if fd is not None:
+            os.write(fd, b'1')
+            os.close(fd)
+            mitmproxy.ctx.options.nsb_readiness_fd = None
 
     def configure(self, updated: set[str]):
         '''Called when configuration changes. The updated argument is a set-like object containing the keys of all changed options. This event is called during startup with all options in the updated set.'''
