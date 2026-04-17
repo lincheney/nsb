@@ -3,11 +3,8 @@
 import asyncio
 import shlex
 import sys
-import shutil
 import os
-import json
 import socket
-import subprocess
 from functools import partial
 from pathlib import Path
 
@@ -113,18 +110,14 @@ class Handler:
         if ld_preload := os.environ.pop('LD_PRELOAD', None):
             command = f'/usr/bin/env LD_PRELOAD={shlex.quote(ld_preload)} {command}'
 
-        wg_conf = json.loads(self.wg_conf.read_text())
-        client_key = wg_conf['client_key']
-        # i could do async but this is just easier
-        server_key = subprocess.check_output(['wg', 'pubkey'], input=wg_conf['server_key'], text=True).strip('\n')
-
         script_sh = f'''
 set -eu -o pipefail
+# bc you may have no jq
+extract_json() {{ {shlex.quote(sys.executable)} -c 'import sys, json; print(json.load(sys.stdin)[sys.argv[1]])' "$@"; }}
 # set up wireguard
 ip link add dev {self.wg_iface} type wireguard
 ip address add dev {self.wg_iface} {self.wg_subnet}
-wg set {self.wg_iface} private-key <(printf %s "$__wg_client_key") peer "$__wg_server_key" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{self.wg_port}
-unset __wg_client_key __wg_server_key
+wg set {self.wg_iface} private-key <(<{shlex.quote(str(self.wg_conf))} extract_json client_key) peer "$(<{shlex.quote(str(self.wg_conf))} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{self.wg_port}
 ip link set up dev {self.wg_iface}
 
 # route everything through wireguard
@@ -169,11 +162,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--config-net',
             'bash', '-c', script_sh,
 
-            env={
-                '__wg_server_key': server_key,
-                '__wg_client_key': client_key,
-                **{k: v for k, v in os.environ.items() if k not in {'LD_PRELOAD'}},
-            }
+            env={k: v for k, v in os.environ.items() if k not in {'LD_PRELOAD'}},
         )
 
     async def _start_mitmproxy(self):
