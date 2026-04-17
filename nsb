@@ -5,6 +5,7 @@ import shlex
 import sys
 import os
 import socket
+import subprocess
 from functools import partial
 from pathlib import Path
 
@@ -105,7 +106,7 @@ class Handler:
         self.wg_subnet = f'{self.wg_ip}/24'
         self.wg_conf = Path('~/.mitmproxy/wireguard.conf').expanduser()
 
-    async def start_pasta(self):
+    async def run_pasta(self):
         command = ' '.join(map(shlex.quote, self.extras))
         if ld_preload := os.environ.pop('LD_PRELOAD', None):
             command = f'/usr/bin/env LD_PRELOAD={shlex.quote(ld_preload)} {command}'
@@ -142,12 +143,12 @@ mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
 umount /tmp
 
 # drop net admin and reset user
-setpriv --bounding-set -net_admin -- \\
+setpriv --inh-caps -net_admin --bounding-set -net_admin \\
 unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 {command}
 '''
 
-        return await asyncio.create_subprocess_exec(
+        pasta = await asyncio.create_subprocess_exec(
             'pasta',
             '--ipv4-only',
             '--address', self.tap_subnet.partition('/')[0],
@@ -159,10 +160,29 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '-I', self.tap_iface,
             '--map-host-loopback', self.host_ip,
             '--config-net',
-            'bash', '-c', script_sh,
-
+            'sh', '-c', 'echo 123 && sleep inf',
+            stdout=subprocess.PIPE,
             env={k: v for k, v in os.environ.items() if k not in {'LD_PRELOAD'}},
         )
+        await pasta.stdout.readline()
+
+        # there should only be one
+        child_pid = Path(f'/proc/{pasta.pid}/task/{pasta.pid}/children').read_text().split()[0]
+        nsenter = await asyncio.create_subprocess_exec(
+            'nsenter',
+            '--uts', '--net', '--pid', '--mount', '--user', '--env',
+            '--wd=' + os.getcwd(),
+            '--keep-caps',
+            '--preserve-credentials',
+            '--target', child_pid,
+            '--',
+            'bash', '-c', script_sh,
+        )
+
+        try:
+            return await nsenter.wait()
+        finally:
+            pasta.terminate()
 
     async def _start_mitmproxy(self):
         # use this pipe to signal readiness
@@ -207,8 +227,6 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         tasks = []
 
         if self.wg_conf.exists():
-            pasta = await self.start_pasta()
-
             self.mitm_dns_port = get_free_port()
             self.mitm_wg_port = get_free_port()
 
@@ -226,12 +244,11 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
-            pasta = await self.start_pasta()
-
-        rc = await pasta.wait()
-        for t in tasks:
-            t.cancel()
-        return rc
+        try:
+            return await self.run_pasta()
+        finally:
+            for t in tasks:
+                t.cancel()
 
 async def main():
     args = []
