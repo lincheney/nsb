@@ -184,9 +184,8 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
         try:
             os.close(w)
-            loop = asyncio.get_running_loop()
             reader = asyncio.StreamReader()
-            await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(r, 'rb'))
+            await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(r, 'rb'))
             buf = await reader.read()
             if buf != b'1':
                 raise Exception('mitmdump failed to start properly')
@@ -251,4 +250,7 @@ async def main():
 
 
 if __name__ == '__main__':
-    sys.exit(asyncio.run(main()))
+    try:
+        sys.exit(asyncio.run(main()))
+    except KeyboardInterrupt:
+        pass
