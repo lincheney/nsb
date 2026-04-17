@@ -108,8 +108,6 @@ class Handler:
 
     async def run_pasta(self):
         command = ' '.join(map(shlex.quote, self.extras))
-        if ld_preload := os.environ.pop('LD_PRELOAD', None):
-            command = f'/usr/bin/env LD_PRELOAD={shlex.quote(ld_preload)} {command}'
 
         script_sh = f'''
 set -eu -o pipefail
@@ -175,7 +173,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         child_pid = Path(f'/proc/{pasta.pid}/task/{pasta.pid}/children').read_text().split()[0]
         nsenter = await asyncio.create_subprocess_exec(
             'nsenter',
-            '--uts', '--net', '--pid', '--mount', '--user', '--env',
+            '--net', '--pid', '--mount', '--user',
             '--wd=' + os.getcwd(),
             '--keep-caps',
             '--preserve-credentials',
