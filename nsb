@@ -195,8 +195,6 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--scripts', Path(__file__).parent/'mitm.py',
             '--show-ignored-hosts',
             f'--set=nsb_readiness_fd={w}',
-            '--set=nsb_spec=allow:~dns & ~dnst ^a$ & ~d github.com',
-            '--set=nsb_spec=allow:~m get & ~d github.com',
             #  '--showhost',
             *self.args,
             pass_fds=[w],
