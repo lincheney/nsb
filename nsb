@@ -187,7 +187,10 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         try:
             return await nsenter.wait()
         finally:
-            pasta.terminate()
+            if nsenter.returncode is None:
+                nsenter.terminate()
+            if pasta.returncode is None:
+                pasta.terminate()
 
     async def _start_mitmproxy(self):
         # use this pipe to signal readiness
