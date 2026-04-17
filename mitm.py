@@ -109,7 +109,7 @@ class Actions:
             # skip, you'll get asked later for each question
             return
         elif isinstance(data, Question):
-            descr = 'DNS ' + data.name
+            descr = f'DNS ({mitmproxy.dns.types.to_str(data.type)}) {data.name}'
         elif isinstance(data, mitmproxy.flow.HTTPFlow):
             descr = f'HTTP {data.request.method.upper()} to {data.request.pretty_url}'
         elif isinstance(data, mitmproxy.flow.Flow):
