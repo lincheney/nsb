@@ -91,11 +91,13 @@ async def udp_gc_clients(proxies, interval=20):
                 counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
-    def __init__(self, args, extras, lazy=True):
+    def __init__(self, args, extras, lazy=True, tcp_ports=None, udp_ports=None):
         self.args = args
         self.extras = extras
         self.mitm = None
         self.lazy = lazy
+        self.tcp_ports = tcp_ports
+        self.udp_ports = udp_ports
 
         self.dns_port = get_free_port()
         self.wg_port = get_free_port()
@@ -162,8 +164,8 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--netmask', self.tap_subnet.partition('/')[2],
             '-T', f'53:{self.dns_port}',
             '-U', f'53:{self.dns_port}',
-            #  '-t', 'auto',
-            #  '-u', 'auto',
+            '-t', self.tcp_ports,
+            '-u', self.udp_ports,
             '-I', self.tap_iface,
             '--map-host-loopback', self.host_ip,
             '--config-net',
@@ -265,6 +267,8 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 async def main():
     parser = argparse.ArgumentParser(description='Network sandbox')
     parser.add_argument('--no-lazy-mitm', action='store_true', help='start mitmdump immediately')
+    parser.add_argument('--tcp-ports', default='none')
+    parser.add_argument('--udp-ports', default='none')
     parser.add_argument('command', nargs=argparse.REMAINDER, help='command to run in the sandbox')
 
     args, mitm_args = parser.parse_known_args()
@@ -274,7 +278,13 @@ async def main():
     if command and command[0] == '--':
         command = command[1:]
 
-    handler = Handler(mitm_args, command, lazy=not args.no_lazy_mitm)
+    handler = Handler(
+        mitm_args,
+        command,
+        lazy=not args.no_lazy_mitm,
+        tcp_ports=args.tcp_ports,
+        udp_ports=args.udp_ports
+    )
     return await handler.main()
 
 
