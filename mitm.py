@@ -12,6 +12,8 @@ import mitmproxy.flowfilter
 import mitmproxy.flow
 import mitmproxy.dns
 
+DNS_CACHE = {}
+
 @cache
 def cached(fn, *args):
     return fn(*args)
@@ -51,13 +53,13 @@ class Matchers:
 
         x=[
         data.client_conn.tls and data.client_conn.sni,
-data.server_conn.address and dns_cache.get(data.server_conn.address[0]),
+data.server_conn.address and DNS_CACHE.get(data.server_conn.address[0]),
             hasattr(data, 'request') and getattr(data.request, 'host', None),
             hasattr(data, 'request') and getattr(data.request, 'pretty_host', None),
         ]
         if data.client_conn.tls and data.client_conn.sni is not None:
             return regex.search(data.client_conn.sni)
-        elif data.server_conn.address and (names := dns_cache.get(data.server_conn.address[0])):
+        elif data.server_conn.address and (names := DNS_CACHE.get(data.server_conn.address[0])):
             # we'll grab it from the dns cache
             return any(regex.search(n) for n in names)
 
@@ -172,7 +174,6 @@ class Parser:
 class Addon:
     def __init__(self):
         self.specs = []
-        self.dns_cache = {}
 
     def apply_specs(self, data):
         try:
@@ -289,7 +290,7 @@ class Addon:
         for answer in flow.response.answers:
             if answer.type in (mitmproxy.dns.types.A, mitmproxy.dns.types.AAAA):
                 ip = str(ipaddress.ip_address(answer.data))
-                self.dns_cache.setdefault(ip, set()).add(answer.name)
+                DNS_CACHE.setdefault(ip, set()).add(answer.name)
 
     def dns_error(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS error has occurred.'''
