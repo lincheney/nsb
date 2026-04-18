@@ -208,6 +208,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             #  '--showhost',
             *self.args,
             pass_fds=[w],
+            start_new_session=True,
         )
 
         try:
