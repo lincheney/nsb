@@ -209,14 +209,15 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             if pasta.returncode is None:
                 pasta.terminate()
 
-    async def _start_mitmproxy(self):
+    async def _start_mitmproxy(self, dns_port, wg_port, **kwargs):
         # use this pipe to signal readiness
         r, w = os.pipe()
 
+        kwargs.setdefault('start_new_session', True)
         proc = await asyncio.create_subprocess_exec(
             self.mitmproxy_path,
-            '--mode', f'wireguard@{LOCALHOST}:{self.mitm_wg_port}',
-            '--mode', f'dns@{LOCALHOST}:{self.mitm_dns_port}',
+            '--mode', f'dns@{LOCALHOST}:{dns_port}',
+            '--mode', f'wireguard@{LOCALHOST}:{wg_port}',
             '--scripts', self.mitm_script,
             '--show-ignored-hosts',
             '--set=connection_strategy=lazy',
@@ -224,7 +225,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
              '--showhost',
             *self.args,
             pass_fds=[w],
-            start_new_session=True,
+            **kwargs,
         )
 
         try:
@@ -251,9 +252,9 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
         return proc
 
-    def start_mitmproxy(self):
+    def start_mitmproxy(self, dns_port, wg_port, **kwargs):
         if self.mitm is None:
-            self.mitm = create_task(self._start_mitmproxy())
+            self.mitm = create_task(self._start_mitmproxy(dns_port, wg_port, **kwargs))
         return self.mitm
 
     def mitmproxy_is_finished(self):
@@ -263,20 +264,19 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         tasks = []
 
         if self.wg_conf.exists() and self.lazy:
-            self.mitm_dns_port = get_free_port()
-            self.mitm_wg_port = get_free_port()
+            mitm_dns_port = get_free_port()
+            mitm_wg_port = get_free_port()
+            start_mitmproxy = partial(self.start_mitmproxy, mitm_wg_port, mitm_dns_port)
 
             tasks = [
-                create_task(udp_forward_server((LOCALHOST, self.wg_port), (LOCALHOST, self.mitm_wg_port), self.start_mitmproxy)),
-                create_task(udp_forward_server((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy)),
-                create_task(tcp_forward_server((LOCALHOST, self.dns_port), (LOCALHOST, self.mitm_dns_port), self.start_mitmproxy)),
+                create_task(udp_forward_server((LOCALHOST, self.wg_port), (LOCALHOST, mitm_wg_port), start_mitmproxy)),
+                create_task(udp_forward_server((LOCALHOST, self.dns_port), (LOCALHOST, mitm_dns_port), start_mitmproxy)),
+                create_task(tcp_forward_server((LOCALHOST, self.dns_port), (LOCALHOST, mitm_dns_port), start_mitmproxy)),
             ]
 
         else:
             # launch mitmproxy first to create the wg config
-            self.mitm_wg_port = self.wg_port
-            self.mitm_dns_port = self.dns_port
-            await self.start_mitmproxy()
+            await self.start_mitmproxy(self.wg_port, self.dns_port)
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
@@ -288,6 +288,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
 async def main():
     lazy = False
+    only_mitmdump = False
     tcp_ports = 'none'
     udp_ports = 'none'
     dns_port = None
@@ -300,6 +301,8 @@ async def main():
             command.append(arg)
         elif arg == '--lazy-mitm':
             lazy = True
+        elif arg == '--only-mitmdump':
+            only_mitmdump = True
         elif arg.startswith('--tcp-ports='):
             tcp_ports = arg.removeprefix('--tcp-ports=')
         elif arg.startswith('--udp-ports='):
@@ -322,9 +325,13 @@ async def main():
         tcp_ports=tcp_ports,
         udp_ports=udp_ports,
         dns_port=dns_port,
-        wg_port=wg_port
+        wg_port=wg_port,
     )
-    return await handler.main()
+    if only_mitmdump:
+        proc = await handler.start_mitmproxy(handler.dns_port, handler.wg_port, start_new_session=False)
+        return await proc.wait()
+    else:
+        return await handler.main()
 
 
 if __name__ == '__main__':
