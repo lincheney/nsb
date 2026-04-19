@@ -91,7 +91,7 @@ async def udp_gc_clients(proxies, interval=20):
                 counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
-    def __init__(self, args, extras, lazy=True, tcp_ports=None, udp_ports=None):
+    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None):
         self.args = args
         self.extras = extras
         self.mitm = None
@@ -287,7 +287,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 t.cancel()
 
 async def main():
-    lazy = True
+    lazy = False
     tcp_ports = 'none'
     udp_ports = 'none'
     mitm_args = []
@@ -296,8 +296,8 @@ async def main():
     for arg in sys.argv[1:]:
         if command is not None:
             command.append(arg)
-        elif arg == '--no-lazy-mitm':
-            lazy = False
+        elif arg == '--lazy-mitm':
+            lazy = True
         elif arg.startswith('--tcp-ports='):
             tcp_ports = arg.removeprefix('--tcp-ports=')
         elif arg.startswith('--udp-ports='):
