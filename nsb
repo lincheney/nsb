@@ -6,6 +6,7 @@ import sys
 import os
 import socket
 import subprocess
+import shutil
 from functools import partial
 from pathlib import Path
 
@@ -98,6 +99,10 @@ class Handler:
         self.tcp_ports = tcp_ports
         self.udp_ports = udp_ports
 
+        self.root_dir = Path(__file__).resolve().parent
+        self.mitm_script = self.root_dir/'mitm.py'
+        self.mitmproxy_path = shutil.which('mitmdump')
+
         self.dns_port = get_free_port()
         self.wg_port = get_free_port()
 
@@ -113,6 +118,7 @@ class Handler:
         command = ' '.join(map(shlex.quote, self.extras))
         python = shlex.quote(sys.executable)
         wg_conf = shlex.quote(str(self.wg_conf))
+        mitm_script = shlex.quote(str(self.mitm_script))
 
         script_sh = f'''
 set -eu -o pipefail
@@ -143,8 +149,14 @@ echo nameserver {LOCALHOST} > /tmp/resolv.conf
 cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > /tmp/certs
 mount --bind /tmp/resolv.conf /etc/resolv.conf -o ro
 mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
+cp -- {mitm_script} /tmp/mitm.py
+# you get your own copy
+mount --bind /tmp/mitm.py {mitm_script}
 umount /tmp
 
+mount --bind ~/.mitmproxy/{{,}} -o ro
+
+cd .
 # drop net admin and reset user
 setpriv --inh-caps -net_admin --bounding-set -net_admin --pdeathsig SIGKILL \\
 unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
@@ -202,10 +214,10 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         r, w = os.pipe()
 
         proc = await asyncio.create_subprocess_exec(
-            'mitmdump',
+            self.mitmproxy_path,
             '--mode', f'wireguard@{LOCALHOST}:{self.mitm_wg_port}',
             '--mode', f'dns@{LOCALHOST}:{self.mitm_dns_port}',
-            '--scripts', Path(__file__).resolve().parent/'mitm.py',
+            '--scripts', self.mitm_script,
             '--show-ignored-hosts',
             '--set=connection_strategy=lazy',
             f'--set=nsb_readiness_fd={w}',
