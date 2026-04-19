@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import shutil
+import argparse
 from functools import partial
 from pathlib import Path
 
@@ -287,53 +288,42 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 t.cancel()
 
 async def main():
-    lazy = False
-    only_mitmdump = False
-    no_mitmdump = False
-    tcp_ports = 'none'
-    udp_ports = 'none'
-    dns_port = None
-    wg_port = None
-    mitm_args = []
-    # can't get argparse to work the way i want
-    command = None
-    for arg in sys.argv[1:]:
-        if command is not None:
-            command.append(arg)
-        elif arg == '--lazy-mitm':
-            lazy = True
-        elif arg == '--only-mitmdump':
-            only_mitmdump = True
-        elif arg == '--no-mitmdump':
-            no_mitmdump = True
-        elif arg.startswith('--tcp-ports='):
-            tcp_ports = arg.removeprefix('--tcp-ports=')
-        elif arg.startswith('--udp-ports='):
-            udp_ports = arg.removeprefix('--udp-ports=')
-        elif arg.startswith('--dns-port='):
-            dns_port = int(arg.removeprefix('--dns-port='))
-        elif arg.startswith('--wg-port='):
-            wg_port = int(arg.removeprefix('--wg-port='))
-        elif arg == '--':
-            command = []
-        elif arg.startswith('--'):
-            mitm_args.append(arg)
-        else:
-            command = [arg]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--lazy-mitm', action='store_true', help='start mitmproxy lazily')
+    parser.add_argument('--only-mitmdump', action='store_true', help='only start mitmdump, do not run the command')
+    parser.add_argument('--no-mitmdump', action='store_true', help='only run the command, do not run start mitmdump')
+    parser.add_argument('--tcp-ports', default='none', help='tcp ports to forward (default: %(default)s)')
+    parser.add_argument('--udp-ports', default='none', help='udp ports to forward (default: %(default)s)')
+    parser.add_argument('--dns-port', type=int)
+    parser.add_argument('--wg-port', type=int)
+    parser.add_argument('command', nargs=argparse.REMAINDER, help='command to run')
+
+    # argparse treats unknown args with spaces as positional even if they start with --
+    args = [a.replace(' ', '\x00') if a.startswith('--') else a for a in sys.argv[1:]]
+
+    args, mitm_args = parser.parse_known_args(args)
+
+    mitm_args = [a.replace('\x00', ' ') for a in mitm_args]
+    if args.command[0] == '--':
+        args.command.pop(0)
+    args.command = [a.replace('\x00', ' ') for a in args.command]
+    for k, v in vars(args).items():
+        if isinstance(v, str):
+            setattr(args, k, v.replace('\x00', ' '))
 
     handler = Handler(
         mitm_args,
-        command,
-        lazy=lazy,
-        tcp_ports=tcp_ports,
-        udp_ports=udp_ports,
-        dns_port=dns_port,
-        wg_port=wg_port,
+        args.command,
+        lazy=args.lazy_mitm,
+        tcp_ports=args.tcp_ports,
+        udp_ports=args.udp_ports,
+        dns_port=args.dns_port,
+        wg_port=args.wg_port,
     )
-    if only_mitmdump:
+    if args.only_mitmdump:
         proc = await handler.start_mitmproxy(handler.dns_port, handler.wg_port, start_new_session=False)
         return await proc.wait()
-    elif no_mitmdump:
+    elif args.no_mitmdump:
         return await handler.run_pasta()
     else:
         return await handler.main()
