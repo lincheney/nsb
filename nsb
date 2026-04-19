@@ -91,7 +91,7 @@ async def udp_gc_clients(proxies, interval=20):
                 counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
-    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None):
+    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None, dns_port=None, wg_port=None):
         self.args = args
         self.extras = extras
         self.mitm = None
@@ -103,8 +103,8 @@ class Handler:
         self.mitm_script = self.root_dir/'mitm.py'
         self.mitmproxy_path = shutil.which('mitmdump')
 
-        self.dns_port = get_free_port()
-        self.wg_port = get_free_port()
+        self.dns_port = dns_port or get_free_port()
+        self.wg_port = wg_port or get_free_port()
 
         self.tap_iface = 'eth0'
         self.wg_iface = 'eth1'
@@ -290,6 +290,8 @@ async def main():
     lazy = False
     tcp_ports = 'none'
     udp_ports = 'none'
+    dns_port = None
+    wg_port = None
     mitm_args = []
     # can't get argparse to work the way i want
     command = None
@@ -302,6 +304,10 @@ async def main():
             tcp_ports = arg.removeprefix('--tcp-ports=')
         elif arg.startswith('--udp-ports='):
             udp_ports = arg.removeprefix('--udp-ports=')
+        elif arg.startswith('--dns-port='):
+            dns_port = int(arg.removeprefix('--dns-port='))
+        elif arg.startswith('--wg-port='):
+            wg_port = int(arg.removeprefix('--wg-port='))
         elif arg == '--':
             command = []
         elif arg.startswith('--'):
@@ -314,7 +320,9 @@ async def main():
         command,
         lazy=lazy,
         tcp_ports=tcp_ports,
-        udp_ports=udp_ports
+        udp_ports=udp_ports,
+        dns_port=dns_port,
+        wg_port=wg_port
     )
     return await handler.main()
 
