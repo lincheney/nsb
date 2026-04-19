@@ -267,7 +267,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         if self.wg_conf.exists() and self.lazy:
             mitm_dns_port = get_free_port()
             mitm_wg_port = get_free_port()
-            start_mitmproxy = partial(self.start_mitmproxy, mitm_wg_port, mitm_dns_port)
+            start_mitmproxy = partial(self.start_mitmproxy, mitm_dns_port, mitm_wg_port)
 
             tasks = [
                 create_task(udp_forward_server((LOCALHOST, self.wg_port), (LOCALHOST, mitm_wg_port), start_mitmproxy)),
@@ -277,7 +277,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
         else:
             # launch mitmproxy first to create the wg config
-            await self.start_mitmproxy(self.wg_port, self.dns_port)
+            await self.start_mitmproxy(self.dns_port, self.wg_port)
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
