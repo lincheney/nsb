@@ -289,6 +289,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 async def main():
     lazy = False
     only_mitmdump = False
+    no_mitmdump = False
     tcp_ports = 'none'
     udp_ports = 'none'
     dns_port = None
@@ -303,6 +304,8 @@ async def main():
             lazy = True
         elif arg == '--only-mitmdump':
             only_mitmdump = True
+        elif arg == '--no-mitmdump':
+            no_mitmdump = True
         elif arg.startswith('--tcp-ports='):
             tcp_ports = arg.removeprefix('--tcp-ports=')
         elif arg.startswith('--udp-ports='):
@@ -330,6 +333,8 @@ async def main():
     if only_mitmdump:
         proc = await handler.start_mitmproxy(handler.dns_port, handler.wg_port, start_new_session=False)
         return await proc.wait()
+    elif no_mitmdump:
+        return await handler.run_pasta()
     else:
         return await handler.main()
 
