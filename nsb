@@ -115,7 +115,7 @@ class Handler:
         self.wg_subnet = f'{self.wg_ip}/24'
         self.wg_conf = Path('~/.mitmproxy/wireguard.conf').expanduser()
 
-    async def run_pasta(self):
+    async def run_pasta(self, dns_port, wg_port):
         command = ' '.join(map(shlex.quote, self.extras))
         python = shlex.quote(sys.executable)
         wg_conf = shlex.quote(str(self.wg_conf))
@@ -128,7 +128,7 @@ extract_json() {{ {python} -c 'import sys, json; print(json.load(sys.stdin)[sys.
 # set up wireguard
 ip link add dev {self.wg_iface} type wireguard
 ip address add dev {self.wg_iface} {self.wg_subnet}
-wg set {self.wg_iface} private-key <(<{wg_conf} extract_json client_key) peer "$(<{wg_conf} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{self.wg_port}
+wg set {self.wg_iface} private-key <(<{wg_conf} extract_json client_key) peer "$(<{wg_conf} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{wg_port}
 ip link set up dev {self.wg_iface}
 
 # route everything through wireguard
@@ -136,7 +136,7 @@ ip route show | grep -F 'dev {self.tap_iface}' | cut -d' ' -f1 | xargs -n1 ip ro
 ip route add default via {self.wg_ip} dev {self.wg_iface}
 ip route add {self.host_ip}/32 dev {self.tap_iface}
 # drop everything else
-iptables -A OUTPUT -p udp -d {self.host_ip} --dport {self.wg_port} -o {self.tap_iface} -j ACCEPT
+iptables -A OUTPUT -p udp -d {self.host_ip} --dport {wg_port} -o {self.tap_iface} -j ACCEPT
 for cmd in iptables ip6tables; do
     "$cmd" -A OUTPUT -o {self.tap_iface} -j DROP
     "$cmd" -A OUTPUT -p udp -o {self.wg_iface} -j ACCEPT
@@ -169,18 +169,26 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         # instead if we do (bwrap -> pasta -> CHILD) and (bwrap -> nsenter CHILD -> setpriv -> unshare -> command)
         # this seems to work
 
-        pasta = await asyncio.create_subprocess_exec(
+        args = [
             'pasta',
             '--ipv4-only',
             '--address', self.tap_subnet.partition('/')[0],
             '--netmask', self.tap_subnet.partition('/')[2],
-            '-T', f'53:{self.dns_port}',
-            '-U', f'53:{self.dns_port}',
             '-t', self.tcp_ports,
             '-u', self.udp_ports,
             '-I', self.tap_iface,
             '--map-host-loopback', self.host_ip,
             '--config-net',
+        ]
+        if dns_port is None:
+            args += ['-T', 'none', '-U', 'none']
+        else:
+            args += [
+                '-T', f'53:{dns_port}',
+                '-U', f'53:{dns_port}',
+            ]
+        pasta = await asyncio.create_subprocess_exec(
+            *args,
             '--',
             'setpriv', '--pdeathsig', 'SIGKILL',
             'sh', '-c', 'echo 123 && sleep inf',
@@ -282,7 +290,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 await asyncio.sleep(0.1)
 
         try:
-            return await self.run_pasta()
+            return await self.run_pasta(self.dns_port, self.wg_port)
         finally:
             for t in tasks:
                 t.cancel()
@@ -324,7 +332,7 @@ async def main():
         proc = await handler.start_mitmproxy(handler.dns_port, handler.wg_port, start_new_session=False)
         return await proc.wait()
     elif args.no_mitmdump:
-        return await handler.run_pasta()
+        return await handler.run_pasta(args.dns_port, args.wg_port)
     else:
         return await handler.main()
 
