@@ -281,9 +281,10 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--lazy-mitm', action='store_true', help='start mitmproxy lazily')
-    parser.add_argument('--only-mitmdump', action='store_true', help='only start mitmdump, do not run the command')
-    parser.add_argument('--no-mitmdump', action='store_true', help='only run the command, do not run start mitmdump')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--lazy-mitmdump', action='store_true', help='start mitmproxy lazily')
+    group.add_argument('--only-mitmdump', action='store_true', help='only start mitmdump, do not run the command')
+    group.add_argument('--no-mitmdump', action='store_true', help='only run the command, do not run start mitmdump')
     parser.add_argument('--tcp-ports', default='none', help='tcp ports to forward (default: %(default)s)')
     parser.add_argument('--udp-ports', default='none', help='udp ports to forward (default: %(default)s)')
     parser.add_argument('--wg-port', type=int)
@@ -305,7 +306,7 @@ async def main():
     handler = Handler(
         mitm_args,
         args.command,
-        lazy=args.lazy_mitm,
+        lazy=args.lazy_mitmdump,
         tcp_ports=args.tcp_ports,
         udp_ports=args.udp_ports,
         wg_port=args.wg_port,
@@ -314,6 +315,8 @@ async def main():
         proc = await handler.start_mitmproxy(handler.wg_port, start_new_session=False)
         return await proc.wait()
     elif args.no_mitmdump:
+        if not args.wg_port:
+            parser.error('--no-mitmdump requires --wg-port')
         return await handler.run_pasta(args.wg_port)
     else:
         return await handler.main()
