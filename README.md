@@ -9,6 +9,7 @@ through [mitmproxy](https://www.mitmproxy.org/) with configurable allow/block ru
 
 You need these dependencies
 * Linux with user namespacing enabled
+* python3
 * [mitmdump(https://docs.mitmproxy.org/stable/overview/installation/)
 * [pasta](https://passt.top/passt/about/#availability) (if you have podman, you are probably already using this)
 
