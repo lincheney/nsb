@@ -296,7 +296,7 @@ async def main():
     args, mitm_args = parser.parse_known_args(args)
 
     mitm_args = [a.replace('\x00', ' ') for a in mitm_args]
-    if args.command[0] == '--':
+    if args.command and args.command[0] == '--':
         args.command.pop(0)
     args.command = [a.replace('\x00', ' ') for a in args.command]
     for k, v in vars(args).items():
