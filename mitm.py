@@ -12,6 +12,7 @@ from mitmproxy.dns import DNSFlow, Question
 import mitmproxy.flowfilter
 import mitmproxy.flow
 import mitmproxy.dns
+import mitmproxy.proxy
 
 DNS_CACHE = {}
 
@@ -239,6 +240,7 @@ class Addon:
         loader.add_option("nsb_readiness_fd", typing.Optional[int], None, 'nsb readiness fd (internal use)')
         loader.add_option("nsb_block_direct_ip", bool, True, 'block direct ip access not resolved via dns')
         loader.add_option("nsb_block_domain_fronting", bool, True, 'block domain fronting (mismatched dns/sni/host)')
+        loader.add_option("nsb_redirect_all_dns", bool, True, 'redirect all DNS to the system resolver (including to e.g. 1.1.1.1)')
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
@@ -341,6 +343,10 @@ class Addon:
     async def dns_request(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS query has been received.'''
         await self.apply_specs(flow)
+        if mitmproxy.ctx.options.nsb_redirect_all_dns:
+            if not isinstance(flow.client_conn.proxy_mode, mitmproxy.proxy.mode_specs.WireGuardMode):
+                flow.client_conn.proxy_mode = cached(mitmproxy.proxy.mode_specs.WireGuardMode, '', '', '', '')
+            flow.server_conn.address = ('10.0.0.53', 53)
         for q in flow.request.questions:
             await self.apply_specs(q)
         questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]

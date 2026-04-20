@@ -23,28 +23,6 @@ def create_task(fut):
     task.add_done_callback(lambda x: x.cancelled() or x.result())
     return task
 
-async def tcp_forward_streams(reader, writer, size=4096):
-    while True:
-        buf = await reader.read(4096)
-        if not buf:
-            writer.close()
-            await writer.wait_closed()
-            return
-        await writer.drain()
-        writer.write(buf)
-
-async def tcp_forward_client(to_addr, start_mitmproxy, src_reader, src_writer):
-    await start_mitmproxy()
-    dst_reader, dst_writer = await asyncio.open_connection(*to_addr)
-    async with asyncio.TaskGroup() as tasks:
-        forward = tasks.create_task(tcp_forward_streams(src_reader, dst_writer))
-        backward = tasks.create_task(tcp_forward_streams(dst_reader, src_writer))
-
-async def tcp_forward_server(from_addr, to_addr, start_mitmproxy):
-    server = await asyncio.start_server(partial(tcp_forward_client, to_addr, start_mitmproxy), *from_addr)
-    async with server:
-        await server.serve_forever()
-
 class UdpClient(asyncio.DatagramProtocol):
     def __init__(self, queue=None, addr=None):
         self.queue = queue or asyncio.Queue()
@@ -92,7 +70,7 @@ async def udp_gc_clients(proxies, interval=20):
                 counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
-    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None, dns_port=None, wg_port=None):
+    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None, wg_port=None):
         self.args = args
         self.extras = extras
         self.mitm = None
@@ -104,7 +82,6 @@ class Handler:
         self.mitm_script = self.root_dir/'mitm.py'
         self.mitmproxy_path = shutil.which('mitmdump')
 
-        self.dns_port = dns_port or get_free_port()
         self.wg_port = wg_port or get_free_port()
 
         self.tap_iface = 'eth0'
@@ -114,8 +91,10 @@ class Handler:
         self.wg_ip = '192.168.2.2'
         self.wg_subnet = f'{self.wg_ip}/24'
         self.wg_conf = Path('~/.mitmproxy/wireguard.conf').expanduser()
+        # seems to be a special ip
+        self.nameserver = '10.0.0.53'
 
-    async def run_pasta(self, dns_port, wg_port):
+    async def run_pasta(self, wg_port):
         command = ' '.join(map(shlex.quote, self.extras))
         python = shlex.quote(sys.executable)
         wg_conf = shlex.quote(str(self.wg_conf))
@@ -146,7 +125,7 @@ done
 
 mount -t tmpfs -o size=10M tmpfs /tmp
 # override some files
-echo nameserver {LOCALHOST} > /tmp/resolv.conf
+echo nameserver {self.nameserver} > /tmp/resolv.conf
 cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > /tmp/certs
 mount --bind /tmp/resolv.conf /etc/resolv.conf -o ro
 mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
@@ -174,19 +153,14 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--ipv4-only',
             '--address', self.tap_subnet.partition('/')[0],
             '--netmask', self.tap_subnet.partition('/')[2],
+            '-T', 'none',
+            '-U', 'none',
             '-t', self.tcp_ports,
             '-u', self.udp_ports,
             '-I', self.tap_iface,
             '--map-host-loopback', self.host_ip,
             '--config-net',
         ]
-        if dns_port is None:
-            args += ['-T', 'none', '-U', 'none']
-        else:
-            args += [
-                '-T', f'53:{dns_port}',
-                '-U', f'53:{dns_port}',
-            ]
         pasta = await asyncio.create_subprocess_exec(
             *args,
             '--',
@@ -218,14 +192,13 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             if pasta.returncode is None:
                 pasta.terminate()
 
-    async def _start_mitmproxy(self, dns_port, wg_port, **kwargs):
+    async def _start_mitmproxy(self, wg_port, **kwargs):
         # use this pipe to signal readiness
         r, w = os.pipe()
 
         kwargs.setdefault('start_new_session', True)
         proc = await asyncio.create_subprocess_exec(
             self.mitmproxy_path,
-            '--mode', f'dns@{LOCALHOST}:{dns_port}',
             '--mode', f'wireguard@{LOCALHOST}:{wg_port}',
             '--scripts', self.mitm_script,
             '--show-ignored-hosts',
@@ -261,9 +234,9 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 
         return proc
 
-    def start_mitmproxy(self, dns_port, wg_port, **kwargs):
+    def start_mitmproxy(self, wg_port, **kwargs):
         if self.mitm is None:
-            self.mitm = create_task(self._start_mitmproxy(dns_port, wg_port, **kwargs))
+            self.mitm = create_task(self._start_mitmproxy(wg_port, **kwargs))
         return self.mitm
 
     def mitmproxy_is_finished(self):
@@ -273,24 +246,21 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         tasks = []
 
         if self.wg_conf.exists() and self.lazy:
-            mitm_dns_port = get_free_port()
             mitm_wg_port = get_free_port()
-            start_mitmproxy = partial(self.start_mitmproxy, mitm_dns_port, mitm_wg_port)
+            start_mitmproxy = partial(self.start_mitmproxy, mitm_wg_port)
 
             tasks = [
                 create_task(udp_forward_server((LOCALHOST, self.wg_port), (LOCALHOST, mitm_wg_port), start_mitmproxy)),
-                create_task(udp_forward_server((LOCALHOST, self.dns_port), (LOCALHOST, mitm_dns_port), start_mitmproxy)),
-                create_task(tcp_forward_server((LOCALHOST, self.dns_port), (LOCALHOST, mitm_dns_port), start_mitmproxy)),
             ]
 
         else:
             # launch mitmproxy first to create the wg config
-            await self.start_mitmproxy(self.dns_port, self.wg_port)
+            await self.start_mitmproxy(self.wg_port)
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
         try:
-            return await self.run_pasta(self.dns_port, self.wg_port)
+            return await self.run_pasta(self.wg_port)
         finally:
             for t in tasks:
                 t.cancel()
@@ -302,7 +272,6 @@ async def main():
     parser.add_argument('--no-mitmdump', action='store_true', help='only run the command, do not run start mitmdump')
     parser.add_argument('--tcp-ports', default='none', help='tcp ports to forward (default: %(default)s)')
     parser.add_argument('--udp-ports', default='none', help='udp ports to forward (default: %(default)s)')
-    parser.add_argument('--dns-port', type=int)
     parser.add_argument('--wg-port', type=int)
     parser.add_argument('command', nargs=argparse.REMAINDER, help='command to run')
 
@@ -325,14 +294,13 @@ async def main():
         lazy=args.lazy_mitm,
         tcp_ports=args.tcp_ports,
         udp_ports=args.udp_ports,
-        dns_port=args.dns_port,
         wg_port=args.wg_port,
     )
     if args.only_mitmdump:
-        proc = await handler.start_mitmproxy(handler.dns_port, handler.wg_port, start_new_session=False)
+        proc = await handler.start_mitmproxy(handler.wg_port, start_new_session=False)
         return await proc.wait()
     elif args.no_mitmdump:
-        return await handler.run_pasta(args.dns_port, args.wg_port)
+        return await handler.run_pasta(args.wg_port)
     else:
         return await handler.main()
 
