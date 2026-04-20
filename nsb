@@ -7,6 +7,7 @@ import os
 import socket
 import subprocess
 import shutil
+import signal
 import argparse
 from functools import partial
 from pathlib import Path
@@ -165,32 +166,45 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             *args,
             '--',
             'setpriv', '--pdeathsig', 'SIGKILL',
-            'sh', '-c', 'echo 123 && sleep inf',
+            # we add && exit so that sh stays running and reaps children
+            'sh', '-c', 'echo 123 && sleep inf && exit',
             stdout=subprocess.PIPE,
             env={k: v for k, v in os.environ.items() if k not in {'LD_PRELOAD'}},
         )
         await pasta.stdout.readline()
 
         # there should only be one
-        child_pid = Path(f'/proc/{pasta.pid}/task/{pasta.pid}/children').read_text().split()[0]
-        nsenter = await asyncio.create_subprocess_exec(
-            'nsenter',
-            '--net', '--pid', '--mount', '--user',
-            '--wd=' + os.getcwd(),
-            '--keep-caps',
-            '--preserve-credentials',
-            '--target', child_pid,
-            '--',
-            'bash', '-c', script_sh,
-        )
+        child_pid = int(Path(f'/proc/{pasta.pid}/task/{pasta.pid}/children').read_text().split()[0])
+        nsenter = None
 
         try:
+            nsenter = await asyncio.create_subprocess_exec(
+                'nsenter',
+                '--net', '--pid', '--mount', '--user',
+                '--wd=' + os.getcwd(),
+                '--keep-caps',
+                '--preserve-credentials',
+                '--target', str(child_pid),
+                '--',
+                'bash', '-c', script_sh,
+            )
             return await nsenter.wait()
         finally:
-            if nsenter.returncode is None:
-                nsenter.terminate()
+            if nsenter and nsenter.returncode is None:
+                try:
+                    nsenter.terminate()
+                except ProcessLookupError:
+                    pass
             if pasta.returncode is None:
-                pasta.terminate()
+                try:
+                    pasta.terminate()
+                except ProcessLookupError:
+                    pass
+            try:
+                # pasta may fail to kill the child due to selinux or something
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     async def _start_mitmproxy(self, wg_port, **kwargs):
         # use this pipe to signal readiness
