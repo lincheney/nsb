@@ -229,7 +229,7 @@ class Addon:
             return True
 
         header = None
-        if isinstance(data, mitmproxy.http.HTTPFlow) and not (header := data.request.headers.get('host')):
+        if isinstance(data, mitmproxy.http.HTTPFlow) and not data.client_conn.tls and not (header := data.request.headers.get('host')):
             return True
 
         return (sni is not None and sni not in dns) or (header is not None and header not in dns)
