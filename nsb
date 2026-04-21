@@ -168,6 +168,8 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             env={k: v for k, v in os.environ.items() if k not in {'LD_PRELOAD'}},
         )
         await pasta.stdout.readline()
+        if pasta.returncode is not None:
+            return pasta.returncode
 
         # there should only be one
         child_pid = int(Path(f'/proc/{pasta.pid}/task/{pasta.pid}/children').read_text().split()[0])
