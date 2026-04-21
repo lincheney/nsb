@@ -204,12 +204,11 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             except ProcessLookupError:
                 pass
 
-    async def _start_mitmproxy(self, wg_port, **kwargs):
+    async def _start_mitmproxy(self, wg_port, standalone=False):
         # use this pipe to signal readiness
         r, w = os.pipe()
 
-        kwargs.setdefault('start_new_session', True)
-        proc = await asyncio.create_subprocess_exec(
+        args = [
             self.mitmproxy_path,
             '--mode', f'wireguard@{LOCALHOST}:{wg_port}',
             '--scripts', self.mitm_script,
@@ -218,8 +217,14 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             f'--set=nsb_readiness_fd={w}',
              '--showhost',
             *self.args,
+        ]
+        if not standalone:
+            args.append('--set=termlog_verbosity=warn')
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             pass_fds=[w],
-            **kwargs,
+            start_new_session=not standalone,
         )
 
         try:
@@ -311,7 +316,7 @@ async def main():
         wg_port=args.wg_port,
     )
     if args.only_mitmdump:
-        proc = await handler.start_mitmproxy(handler.wg_port, start_new_session=False)
+        proc = await handler.start_mitmproxy(handler.wg_port, standalone=False)
         return await proc.wait()
     elif args.no_mitmdump:
         if not args.wg_port:
