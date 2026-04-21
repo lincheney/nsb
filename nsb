@@ -241,14 +241,15 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 raise Exception('mitmdump failed to start properly')
 
         except Exception:
-            proc.terminate()
+            if proc.returncode is None:
+                proc.terminate()
             raise
 
         return proc
 
     def start_mitmproxy(self, wg_port, **kwargs):
         if self.mitm is None:
-            self.mitm = create_task(self._start_mitmproxy(wg_port, **kwargs))
+            self.mitm = asyncio.create_task(self._start_mitmproxy(wg_port, **kwargs))
         return self.mitm
 
     def mitmproxy_is_finished(self):
