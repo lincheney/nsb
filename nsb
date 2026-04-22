@@ -80,6 +80,7 @@ class Handler:
         self.tcp_ports = tcp_ports
         self.udp_ports = udp_ports
         self.wg_port = wg_port or get_free_port()
+        self.processes = []
 
         self.mitmproxy_path = shutil.which('mitmdump')
 
@@ -96,6 +97,19 @@ class Handler:
         # seems to be a special ip
         self.nameserver = '10.0.0.53'
         self.ca_path = '/etc/ssl/certs/ca-certificates.crt'
+
+    async def run_process(self, *args, **kwargs):
+        proc = await asyncio.create_subprocess_exec(*args, **kwargs)
+        self.processes.append(proc)
+        return proc
+
+    def cleanup_processes(self):
+        for proc in self.processes:
+            if proc.returncode is None:
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
 
     async def run_pasta(self, wg_port):
         command = ' '.join(map(shlex.quote, self.extras))
@@ -164,7 +178,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--map-host-loopback', self.host_ip,
             '--config-net',
         ]
-        pasta = await asyncio.create_subprocess_exec(
+        pasta = await self.run_process(
             *args,
             '--',
             'setpriv', '--pdeathsig', 'SIGKILL',
@@ -182,7 +196,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         nsenter = None
 
         try:
-            nsenter = await asyncio.create_subprocess_exec(
+            nsenter = await self.run_process(
                 'nsenter',
                 '--net', '--pid', '--mount', '--user',
                 '--wd=' + os.getcwd(),
@@ -194,16 +208,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             )
             return await nsenter.wait()
         finally:
-            if nsenter and nsenter.returncode is None:
-                try:
-                    nsenter.terminate()
-                except ProcessLookupError:
-                    pass
-            if pasta.returncode is None:
-                try:
-                    pasta.terminate()
-                except ProcessLookupError:
-                    pass
+            self.cleanup_processes()
             try:
                 # pasta may fail to kill the child due to selinux or something
                 os.kill(child_pid, signal.SIGKILL)
@@ -228,7 +233,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             args.append('--set=termlog_verbosity=warn')
 
         mitm = partial(
-            asyncio.create_subprocess_exec,
+            self.run_process,
             *args,
             pass_fds=[w],
             start_new_session=not standalone,
@@ -279,14 +284,12 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         if self.wg_conf.exists() and self.lazy:
             mitm_wg_port = get_free_port()
             start_mitmproxy = partial(self.start_mitmproxy, mitm_wg_port)
-
-            tasks = [
-                create_task(udp_forward_server((LOCALHOST, self.wg_port), (LOCALHOST, mitm_wg_port), start_mitmproxy)),
-            ]
+            tasks = [create_task(udp_forward_server((LOCALHOST, self.wg_port), (LOCALHOST, mitm_wg_port), start_mitmproxy))]
 
         else:
             # launch mitmproxy first to create the wg config
             await self.start_mitmproxy(self.wg_port)
+            tasks = [self.mitm]
             while not self.wg_conf.exists() and not self.mitmproxy_is_finished():
                 await asyncio.sleep(0.1)
 
@@ -295,10 +298,6 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         finally:
             for t in tasks:
                 t.cancel()
-            if self.mitm and not self.mitm.done():
-                self.mitm.cancel()
-            else:
-                self.mitm.result().terminate()
 
 async def main():
     parser = argparse.ArgumentParser()
@@ -334,15 +333,18 @@ async def main():
         wg_port=args.wg_port,
         logfile=args.log_mitmdump,
     )
-    if args.only_mitmdump:
-        proc = await handler.start_mitmproxy(handler.wg_port, standalone=False)
-        return await proc.wait()
-    elif args.no_mitmdump:
-        if not args.wg_port:
-            parser.error('--no-mitmdump requires --wg-port')
-        return await handler.run_pasta(args.wg_port)
-    else:
-        return await handler.main()
+    try:
+        if args.only_mitmdump:
+            proc = await handler.start_mitmproxy(handler.wg_port, standalone=False)
+            return await proc.wait()
+        elif args.no_mitmdump:
+            if not args.wg_port:
+                parser.error('--no-mitmdump requires --wg-port')
+            return await handler.run_pasta(args.wg_port)
+        else:
+            return await handler.main()
+    finally:
+        handler.cleanup_processes()
 
 
 if __name__ == '__main__':
