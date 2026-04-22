@@ -226,10 +226,15 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         if not standalone:
             args.append('--set=termlog_verbosity=warn')
 
+        def preexec_fn():
+            # redirect stdout to stderr
+            os.dup2(2, 1)
+
         proc = await asyncio.create_subprocess_exec(
             *args,
             pass_fds=[w],
             start_new_session=not standalone,
+            preexec_fn=preexec_fn,
         )
 
         try:
