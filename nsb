@@ -94,6 +94,7 @@ class Handler:
         self.wg_conf = Path('~/.mitmproxy/wireguard.conf').expanduser()
         # seems to be a special ip
         self.nameserver = '10.0.0.53'
+        self.ca_path = '/etc/ssl/certs/ca-certificates.crt'
 
     async def run_pasta(self, wg_port):
         command = ' '.join(map(shlex.quote, self.extras))
@@ -126,12 +127,16 @@ done
 mount -t tmpfs -o size=10M tmpfs /tmp
 # override some files
 echo nameserver {self.nameserver} > /tmp/resolv.conf
-cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > /tmp/certs
+cat {self.ca_path} ~/.mitmproxy/mitmproxy-ca-cert.pem > /tmp/certs
 mount --bind /tmp/resolv.conf /etc/resolv.conf -o ro
-mount --bind /tmp/certs /etc/ssl/certs/ca-certificates.crt -o ro
+mount --bind /tmp/certs {self.ca_path} -o ro
 umount /tmp
 
 mount --bind ~/.mitmproxy/{{,}} -o ro
+
+export CURL_CA_BUNDLE={self.ca_path}
+export AWS_CA_BUNDLE={self.ca_path}
+export SSL_CERT_FILE={self.ca_path}
 
 cd .
 # drop net admin and reset user
