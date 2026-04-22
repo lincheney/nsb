@@ -71,11 +71,12 @@ async def udp_gc_clients(proxies, interval=20):
                 counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
-    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None, wg_port=None):
+    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None, wg_port=None, logfile=None):
         self.args = args
         self.extras = extras
         self.mitm = None
         self.lazy = lazy
+        self.logfile = logfile
         self.tcp_ports = tcp_ports
         self.udp_ports = udp_ports
         self.wg_port = wg_port or get_free_port()
@@ -226,16 +227,18 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         if not standalone:
             args.append('--set=termlog_verbosity=warn')
 
-        def preexec_fn():
-            # redirect stdout to stderr
-            os.dup2(2, 1)
-
-        proc = await asyncio.create_subprocess_exec(
+        mitm = partial(
+            asyncio.create_subprocess_exec,
             *args,
             pass_fds=[w],
             start_new_session=not standalone,
-            preexec_fn=preexec_fn,
+            env={'PYTHONUNBUFFERED': '1', **os.environ},
         )
+        if self.logfile:
+            with open(self.logfile, 'a') as logfile:
+                proc = await mitm(stdout=logfile, stderr=logfile)
+        else:
+            proc = await mitm(stdout=sys.stderr)
 
         try:
             os.close(w)
@@ -303,6 +306,7 @@ async def main():
     group.add_argument('--lazy-mitmdump', action='store_true', help='start mitmproxy lazily')
     group.add_argument('--only-mitmdump', action='store_true', help='only start mitmdump, do not run the command')
     group.add_argument('--no-mitmdump', action='store_true', help='only run the command, do not run start mitmdump')
+    parser.add_argument('--log-mitmdump', help='pipe mitmdump stderr to this file')
     parser.add_argument('--tcp-ports', default='none', help='tcp ports to forward (default: %(default)s)')
     parser.add_argument('--udp-ports', default='none', help='udp ports to forward (default: %(default)s)')
     parser.add_argument('--wg-port', type=int)
@@ -328,6 +332,7 @@ async def main():
         tcp_ports=args.tcp_ports,
         udp_ports=args.udp_ports,
         wg_port=args.wg_port,
+        logfile=args.log_mitmdump,
     )
     if args.only_mitmdump:
         proc = await handler.start_mitmproxy(handler.wg_port, standalone=False)
