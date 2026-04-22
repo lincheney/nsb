@@ -279,8 +279,6 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         return self.mitm and self.mitm.done() and self.mitm.result().returncode is not None
 
     async def main(self):
-        tasks = []
-
         if self.wg_conf.exists() and self.lazy:
             mitm_wg_port = get_free_port()
             start_mitmproxy = partial(self.start_mitmproxy, mitm_wg_port)
