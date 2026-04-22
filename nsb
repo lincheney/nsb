@@ -292,6 +292,10 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         finally:
             for t in tasks:
                 t.cancel()
+            if self.mitm and not self.mitm.done():
+                self.mitm.cancel()
+            else:
+                self.mitm.result().terminate()
 
 async def main():
     parser = argparse.ArgumentParser()
