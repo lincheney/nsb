@@ -358,13 +358,15 @@ class NSB:
             if not isinstance(flow.client_conn.proxy_mode, mitmproxy.proxy.mode_specs.WireGuardMode):
                 flow.client_conn.proxy_mode = cached(mitmproxy.proxy.mode_specs.WireGuardMode, '', '', '', '')
             flow.server_conn.address = ('10.0.0.53', 53)
-        for q in flow.request.questions:
-            await self.apply_specs(q)
-        questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]
-        if questions:
-            flow.request.questions = questions
-        else:
-            flow.response = flow.request.fail(mitmproxy.dns.response_codes.NXDOMAIN)
+
+        if flow.response is None or flow.response.response_code != mitmproxy.dns.response_codes.NXDOMAIN:
+            for q in flow.request.questions:
+                await self.apply_specs(q)
+            questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]
+            if questions:
+                flow.request.questions = questions
+            else:
+                await Actions.block(flow)
 
     def dns_response(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS response has been received or set.'''
