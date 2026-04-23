@@ -40,6 +40,7 @@ It loads the `./mitm.py` addon which does the actual allowing/blocking, and take
 * `nsb_block_direct_ip` - block access to IPs that do not have a previous corresponding DNS lookup (enabled by default)
 * `nsb_block_domain_fronting` - block HTTP(s) access where any of the DNS, SNI or host header do not match (enabled by default)
 * `nsb_redirect_all_dns` - redirect all DNS to the system resolver i.e. preventing processes from trying to query DNS servers directly e.g. `dig @1.1.1.1 ...` (enabled by default)
+* `nsb_ask_cmd` - shell snippet to run for the `ask` action
 
 ### `nsb_spec`
 
@@ -71,3 +72,20 @@ Usually `nsb` runs your command and `mitmdump` together, but you can split it up
 
 This allows you to run them in separate terminals (which also works better with the `ask` action), or to keep one long-running `mitmdump` instance.
 Or you can also use `mitmproxy` (i.e. the TUI) or `mitmweb` this way instead.
+
+### `ask` action
+
+By default when you use the `ask` action, it will prompt you on the terminal.
+Usually this is not ideal; both `mitmdump` *and* the command you are running are trying to access the terminal.
+
+You can either [run mitmproxy in a separate terminal](#run-mitmproxy-separately) or use the `nsb_ask_cmd` option.
+
+The `nsb_ask_cmd` allows you to specify a bash snippet that will get run instead of asking on the terminal.
+The exit code determines whether the request is allowed (zero exit code) or blocked (non-zero exit code).
+A short description of the network request is available in `$1`.
+This could allow you to launch some kind of GUI confirmation dialog window.
+
+For example, here is how to launch a zenity popup window:
+```bash
+nsb --set=nsb_ask_cmd='zenity --question --text="Trying to make request: $1" --ok-label=Allow --cancel-label=Block --title=nsb' ...
+```

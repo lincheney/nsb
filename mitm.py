@@ -117,16 +117,26 @@ class Actions:
             descr = f'{type(data).__name__.removesuffix('Flow')} to {data.server_conn.address[0]}:{data.server_conn.address[1]}'
         else:
             raise NotImplementedError(data)
-        msg = f'>>> {descr}\n>>> (a)llow / (b)lock? '
 
         async with ASK_LOCK:
-            while True:
-                answer = await asyncio.get_running_loop().run_in_executor(None, input, msg)
-                match answer.strip().lower():
-                    case 'a'|'allow':
-                        return await Actions.allow(data)
-                    case 'b'|'block':
-                        return await Actions.block(data)
+            if mitmproxy.ctx.options.nsb_ask_cmd:
+                # execute custom ask command with description as $1
+                proc = await asyncio.create_subprocess_exec('bash', '-c', mitmproxy.ctx.options.nsb_ask_cmd, '--', descr)
+                if await proc.wait() == 0:
+                    return await Actions.allow(data)
+                else:
+                    return await Actions.block(data)
+
+            else:
+                # Default terminal-based prompt
+                msg = f'>>> {descr}\n>>> (a)llow / (b)lock? '
+                while True:
+                    answer = await asyncio.get_running_loop().run_in_executor(None, input, msg)
+                    match answer.strip().lower():
+                        case 'a'|'allow':
+                            return await Actions.allow(data)
+                        case 'b'|'block':
+                            return await Actions.block(data)
 
 class Parser:
     END_REGEX = re.compile('[&|]')
@@ -241,6 +251,7 @@ class Addon:
         loader.add_option("nsb_block_direct_ip", bool, True, 'block direct ip access not resolved via dns')
         loader.add_option("nsb_block_domain_fronting", bool, True, 'block domain fronting (mismatched dns/sni/host)')
         loader.add_option("nsb_redirect_all_dns", bool, True, 'redirect all DNS to the system resolver (including to e.g. 1.1.1.1)')
+        loader.add_option("nsb_ask_cmd", str, "", "shell snippet to run for the 'ask' action")
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
