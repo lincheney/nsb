@@ -107,7 +107,7 @@ class Handler:
         for proc in self.processes:
             if proc.returncode is None:
                 try:
-                    proc.terminate()
+                    proc.kill()
                 except ProcessLookupError:
                     pass
 
