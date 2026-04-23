@@ -203,7 +203,7 @@ class Parser:
             return args[0]
         return partial(func, args)
 
-class Addon:
+class NSB:
     def __init__(self):
         self.specs = []
 
@@ -445,4 +445,4 @@ class Addon:
     def websocket_end(self, flow: mitmproxy.http.HTTPFlow):
         '''A WebSocket connection has ended. You can check flow.websocket.close_code to determine why it ended.'''
 
-addons = [Addon()]
+addons = [NSB()]
