@@ -322,6 +322,9 @@ async def main():
         if isinstance(v, str):
             setattr(args, k, v.replace('\x00', ' '))
 
+    # if we don't do this the cleanup does not trigger
+    signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))
+
     handler = Handler(
         mitm_args,
         args.command,
