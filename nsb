@@ -133,10 +133,14 @@ ip route add {self.host_ip}/32 dev {self.tap_iface}
 # drop everything else
 iptables -A OUTPUT -p udp -d {self.host_ip} --dport {wg_port} -o {self.tap_iface} -j ACCEPT
 for cmd in iptables ip6tables; do
-    "$cmd" -A OUTPUT -o {self.tap_iface} -j DROP
-    "$cmd" -A OUTPUT -p udp -o {self.wg_iface} -j ACCEPT
-    "$cmd" -A OUTPUT -p tcp -o {self.wg_iface} -j ACCEPT
-    "$cmd" -A OUTPUT -o {self.wg_iface} -j DROP
+    cat <<EOF | "$cmd-restore" -n
+*filter
+-A OUTPUT -o {self.tap_iface} -j DROP
+-A OUTPUT -p udp -o {self.wg_iface} -j ACCEPT
+-A OUTPUT -p tcp -o {self.wg_iface} -j ACCEPT
+-A OUTPUT -o {self.wg_iface} -j DROP
+COMMIT
+EOF
 done
 
 mount -t tmpfs -o size=10M tmpfs /tmp
