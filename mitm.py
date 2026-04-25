@@ -33,10 +33,6 @@ only = partial(cached, only)
 class Matchers:
 
     @only(DNSFlow, Question)
-    def dns(data):
-        return True
-
-    @only(DNSFlow, Question)
     def dnst(regex: str, data):
         if isinstance(data, DNSFlow):
             return any(Matchers.dnst(regex, q) for q in data.request.questions)
@@ -381,9 +377,15 @@ class NSB:
             flow.server_conn.address = ('10.0.0.53', 53)
 
         if flow.response is None or flow.response.response_code != mitmproxy.dns.response_codes.NXDOMAIN:
+            questions = []
+            copy = flow.copy()
             for q in flow.request.questions:
-                await self.apply_specs(q)
-            questions = [q for q in flow.request.questions if not getattr(q, 'blocked', None)]
+                copy.response = None
+                copy.request.questions = [q]
+                await self.apply_specs(copy)
+                if copy.response is None:
+                    questions.append(q)
+
             if questions:
                 flow.request.questions = questions
             else:
