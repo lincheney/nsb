@@ -392,7 +392,7 @@ class NSB:
         '''A DNS query has been received.'''
 
         if len(flow.request.questions) != 1:
-            data.response = data.request.fail(mitmproxy.dns.response_codes.FORMERR)
+            flow.response = flow.request.fail(mitmproxy.dns.response_codes.FORMERR)
             return
 
         await self.apply_specs(flow)
