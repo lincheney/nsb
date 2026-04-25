@@ -124,7 +124,7 @@ class Actions:
                     return await Actions.block(data)
 
             else:
-                # Default terminal-based prompt
+                # default terminal-based prompt
                 msg = f'>>> {descr}\n>>> (a)llow / (b)lock? '
                 while True:
                     answer = await asyncio.get_running_loop().run_in_executor(None, input, msg)
@@ -137,7 +137,7 @@ class Actions:
 class Parser:
     END_REGEX = re.compile('[&|]')
     END_AND_BRACKET_REGEX = re.compile('[&|)]')
-    WORD_REGEX = re.compile(r'''(?!~)(\\.|\S)+|'(\\.|[^'])*'|"(\\.|[^"])*"''')
+    WORD_REGEX = re.compile(r'''(?!~)(\\.|[^\s)])+|'(\\.|[^'])*'|"(\\.|[^"])*"''')
     NUM_REGEX = re.compile(r'\d+')
     OPS = {k: v for k, v in vars(Matchers).items() if not k.startswith('_')}
     OPS_REGEX = re.compile(r'([!(]' + ''.join(rf'|~{k}\b' for k in OPS.keys()) + '|' + WORD_REGEX.pattern + ')')
