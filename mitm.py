@@ -56,6 +56,12 @@ class Matchers:
             # we'll grab it from the dns cache
             return any(regex.search(n) for n in names)
 
+    def dstip(subnet: str, data):
+        if data.server_conn and data.server_conn.address:
+            subnet = cached(ipaddress.ip_network, subnet, False)
+            ip = ipaddress.ip_address(data.server_conn.address[0])
+            return ip in subnet
+
 def AND(nodes, data):
     return all(n(data) for n in nodes)
 

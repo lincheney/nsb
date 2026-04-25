@@ -37,7 +37,7 @@ nsb [OPTIONS] [--] COMMAND...
 
 It loads the `./mitm.py` addon which does the actual allowing/blocking, and takes the options:
 * `nsb_spec` - list of allow/block rules
-* `nsb_allow_direct_ip` - list of subnets to allow direct access to IPs do not have a previous corresponding DNS lookup, otherwise it is blocked
+* `nsb_allow_direct_ip` - list of `IP[/MASK]` to allow direct access to IPs do not have a previous corresponding DNS lookup, otherwise it is blocked
 * `nsb_block_domain_fronting` - block HTTP(s) access where any of the DNS, SNI or host header do not match (enabled by default)
 * `nsb_redirect_all_dns` - redirect all DNS to the system resolver i.e. preventing processes from trying to query DNS servers directly e.g. `dig @1.1.1.1 ...` (enabled by default)
 * `nsb_ask_cmd` - shell snippet to run for the `ask` action
@@ -57,6 +57,8 @@ The format of a spec is `ACTION:FILTER`, where `ACTION` is one of:
 
 and the `FILTER` follows the same syntax as described [here](https://docs.mitmproxy.org/stable/concepts/filters/) with the following modifications:
 * there is an additional `~dnst REGEX` expression that allows you to filter by DNS question type (i.e. A, TXT, MX etc).
+* there is an additional `~dstip IP[/MASK]` expression that allows you to filter destination IP e.g. `~dstip 10.0.0.0/8`
+    * to match on the port you can use `~dst :1234$`
 
 Note that all regex matches are case insensitive and done by [re.search](https://docs.python.org/3/library/re.html#re.search)!
 If you want exact matches you should use `^` and `$` anchors.
