@@ -228,7 +228,6 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--mode', f'wireguard@{LOCALHOST}:{wg_port}',
             '--scripts', self.mitm_script,
             '--show-ignored-hosts',
-            '--set=connection_strategy=lazy',
             f'--set=nsb_readiness_fd={w}',
              '--showhost',
             *self.args,
