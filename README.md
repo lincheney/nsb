@@ -62,6 +62,7 @@ and the `FILTER` follows the same syntax as described [here](https://docs.mitmpr
 * there is an additional `~proto REGEX` expression that allows you to filter on the protocol (TCP or UDP)
     * this is *different* from using the `~tcp` or `~udp` filters which match *otherwise unrecognised* TCP/UDP flows,
         e.g. an HTTP request will *not* match `~tcp` but *will* match `~proto tcp`
+        whereas an SSH connection *will also* match `~tcp` (because SSH is not recognised by mitmproxy)
 
 Note that all regex matches are case insensitive and done by [re.search](https://docs.python.org/3/library/re.html#re.search)!
 If you want exact matches you should use `^` and `$` anchors.
@@ -105,7 +106,8 @@ This means it attempts to read the entire request before connecting to the desti
 This is usually good because if the request ends up being blocked then no connection to the destination is ever made.
 
 However, this can break certain protocols where the server should send a message first, in which case you need the `eager` strategy.
-You can configure this behaviour with the `nsb_connection_strategy` option with `eager:SPEC` or `lazy:SPEC`.
+You can configure this behaviour with the `nsb_connection_strategy` option with `eager:SPEC` or `lazy:SPEC`
+(or `include:FILE` to load more rules from a file).
 Note that the connection strategy is evaluated quite early so many filters in the spec will not work properly.
 Realistically you should be able to use `~dst ...` to match on the `ip:port`
 and provided there was a corresponding DNS query `~d ...` to match on the hostname.
