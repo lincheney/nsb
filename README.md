@@ -59,6 +59,9 @@ and the `FILTER` follows the same syntax as described [here](https://docs.mitmpr
 * there is an additional `~dnst REGEX` expression that allows you to filter by DNS question type (i.e. A, TXT, MX etc).
 * there is an additional `~dstip IP[/MASK]` expression that allows you to filter destination IP e.g. `~dstip 10.0.0.0/8`
     * to match on the port you can use `~dst :1234$`
+* there is an additional `~proto REGEX` expression that allows you to filter on the protocol (TCP or UDP)
+    * this is *different* from using the `~tcp` or `~udp` filters which match *otherwise unrecognised* TCP/UDP flows,
+        e.g. an HTTP request will *not* match `~tcp` but *will* match `~proto tcp`
 
 Note that all regex matches are case insensitive and done by [re.search](https://docs.python.org/3/library/re.html#re.search)!
 If you want exact matches you should use `^` and `$` anchors.

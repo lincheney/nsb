@@ -45,7 +45,7 @@ class Matchers:
         if isinstance(data, DNSFlow):
             return any(Matchers.d(regex, q) for q in data.request.questions)
 
-        regex = re.compile(regex, re.IGNORECASE)
+        regex = cached(re.compile, regex, re.IGNORECASE)
 
         if isinstance(data, Question):
             return regex.search(data.name)
@@ -61,6 +61,10 @@ class Matchers:
             subnet = cached(ipaddress.ip_network, subnet, False)
             ip = ipaddress.ip_address(data.server_conn.address[0])
             return ip in subnet
+
+    def proto(regex: str, data):
+        regex = cached(re.compile, regex, re.IGNORECASE)
+        return regex.search(data.client_conn.transport_protocol)
 
 def AND(nodes, data):
     return all(n(data) for n in nodes)
