@@ -9,7 +9,7 @@ import collections.abc
 from types import SimpleNamespace
 from functools import cache, wraps, partial
 from mitmproxy.proxy.server_hooks import ServerConnectionHookData
-from mitmproxy.dns import DNSFlow, Question
+from mitmproxy.dns import DNSFlow
 import mitmproxy.flowfilter
 import mitmproxy.flow
 import mitmproxy.dns
@@ -33,22 +33,16 @@ only = partial(cached, only)
 
 class Matchers:
 
-    @only(DNSFlow, Question)
+    @only(DNSFlow)
     def dnst(regex: str, data):
-        if isinstance(data, DNSFlow):
-            return any(Matchers.dnst(regex, q) for q in data.request.questions)
-        return re.search(regex, mitmproxy.dns.types.to_str(data.type), re.IGNORECASE)
+        return re.search(regex, mitmproxy.dns.types.to_str(data.request.questions[0].type), re.IGNORECASE)
 
-    @only(mitmproxy.flow.Flow, Question)
+    @only(mitmproxy.flow.Flow)
     def d(regex: str, data):
-
-        if isinstance(data, DNSFlow):
-            return any(Matchers.d(regex, q) for q in data.request.questions)
-
         regex = cached(re.compile, regex, re.IGNORECASE)
 
-        if isinstance(data, Question):
-            return regex.search(data.name)
+        if isinstance(data, DNSFlow):
+            return regex.search(data.requests.questions[0].name)
 
         if data.client_conn.tls and data.client_conn.sni is not None:
             return regex.search(data.client_conn.sni)
@@ -104,8 +98,6 @@ class Actions:
             data.kill()
         elif isinstance(data, ServerConnectionHookData):
             data.server.error = 'blocked'
-        elif isinstance(data, Question):
-            data.blocked = True
         else:
             raise NotImplementedError(data)
 
@@ -114,9 +106,6 @@ class Actions:
 
     async def ask(data):
         if isinstance(data, DNSFlow):
-            # skip, you'll get asked later for each question
-            return
-        elif isinstance(data, Question):
             descr = f'DNS ({mitmproxy.dns.types.to_str(data.type)}) {data.name}'
         elif isinstance(data, mitmproxy.http.HTTPFlow):
             descr = f'HTTP {data.request.method.upper()} to {data.request.pretty_url}'
@@ -401,26 +390,17 @@ class NSB:
 
     async def dns_request(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS query has been received.'''
+
+        if len(flow.request.questions) != 1:
+            data.response = data.request.fail(mitmproxy.dns.response_codes.FORMERR)
+            return
+
         await self.apply_specs(flow)
+
         if mitmproxy.ctx.options.nsb_redirect_all_dns:
             if not isinstance(flow.client_conn.proxy_mode, mitmproxy.proxy.mode_specs.WireGuardMode):
                 flow.client_conn.proxy_mode = cached(mitmproxy.proxy.mode_specs.WireGuardMode, '', '', '', '')
             flow.server_conn.address = ('10.0.0.53', 53)
-
-        if flow.response is None or flow.response.response_code != mitmproxy.dns.response_codes.NXDOMAIN:
-            questions = []
-            copy = flow.copy()
-            for q in flow.request.questions:
-                copy.response = None
-                copy.request.questions = [q]
-                await self.apply_specs(copy)
-                if copy.response is None:
-                    questions.append(q)
-
-            if questions:
-                flow.request.questions = questions
-            else:
-                await Actions.block(flow)
 
     def dns_response(self, flow: mitmproxy.dns.DNSFlow):
         '''A DNS response has been received or set.'''
