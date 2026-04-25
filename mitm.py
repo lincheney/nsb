@@ -206,10 +206,11 @@ class Parser:
 class NSB:
     def __init__(self):
         self.specs = []
+        self.allow_direct_ip = []
 
     async def apply_specs(self, data):
         try:
-            if mitmproxy.ctx.options.nsb_block_direct_ip and self.is_direct_ip(data):
+            if self.is_blocked_direct_ip(data):
                 return await Actions.block(data)
 
             if mitmproxy.ctx.options.nsb_block_domain_fronting and self.is_domain_fronting(data):
@@ -224,14 +225,18 @@ class NSB:
             raise
         await Actions.block(data)
 
-    def is_direct_ip(self, data):
-        return isinstance(data, mitmproxy.flow.Flow) and not isinstance(data, DNSFlow) and data.server_conn.address[0] not in DNS_CACHE
+    def is_blocked_direct_ip(self, data):
+        if isinstance(data, mitmproxy.flow.Flow) and not isinstance(data, DNSFlow) and data.server_conn.address[0] not in DNS_CACHE:
+            ip = ipaddress.ip_address(data.server_conn.address[0])
+            if not any(ip in network for network in self.allow_direct_ip):
+                return True
+        return False
 
     def is_domain_fronting(self, data):
         if not isinstance(data, mitmproxy.flow.Flow) or isinstance(data, DNSFlow):
             return False
 
-        if not (dns := DNS_CACHE.get(data.server_conn.address[0])):
+        if not (dns := DNS_CACHE.get(data.server_conn.address[0])) and self.is_blocked_direct_ip(data):
             return True
 
         sni = None
@@ -239,16 +244,23 @@ class NSB:
             return True
 
         header = None
-        if isinstance(data, mitmproxy.http.HTTPFlow) and not data.client_conn.tls and not (header := data.request.headers.get('host')):
+        if isinstance(data, mitmproxy.http.HTTPFlow) and not (header := data.request.host_header):
             return True
 
-        return (sni is not None and sni not in dns) or (header is not None and header not in dns)
+        if sni and dns and sni not in dns:
+            return True
+        if header and dns and header not in dns:
+            return True
+        if sni and header and sni != header:
+            return True
+
+        return False
 
     def load(self, loader: mitmproxy.addonmanager.Loader):
         '''Called when an addon is first loaded. This event receives a Loader object, which contains methods for adding options and commands. This method is where the addon configures itself.'''
         loader.add_option("nsb_spec", collections.abc.Sequence[str], [], 'nsb filter spec')
         loader.add_option("nsb_readiness_fd", typing.Optional[int], None, 'nsb readiness fd (internal use)')
-        loader.add_option("nsb_block_direct_ip", bool, True, 'block direct ip access not resolved via dns')
+        loader.add_option("nsb_allow_direct_ip", collections.abc.Sequence[str], [], 'block direct ip access not resolved via dns except to these subnets')
         loader.add_option("nsb_block_domain_fronting", bool, True, 'block domain fronting (mismatched dns/sni/host)')
         loader.add_option("nsb_redirect_all_dns", bool, True, 'redirect all DNS to the system resolver (including to e.g. 1.1.1.1)')
         loader.add_option("nsb_ask_cmd", str, "", "shell snippet to run for the 'ask' action")
@@ -286,6 +298,15 @@ class NSB:
                     self.add_spec(spec)
             except Exception:
                 pass
+
+        if 'nsb_allow_direct_ip' in updated:
+            self.allow_direct_ip.clear()
+            if mitmproxy.ctx.options.nsb_allow_direct_ip is not None:
+                for value in mitmproxy.ctx.options.nsb_allow_direct_ip:
+                    try:
+                        self.allow_direct_ip.append(ipaddress.ip_network(value, strict=False))
+                    except Exception:
+                        logging.warning('Failed to parse ip network %s', value)
 
     def done(self):
         '''Called when the addon shuts down, either by being removed from the mitmproxy instance, or when mitmproxy itself shuts down. On shutdown, this event is called after the event loop is terminated, guaranteeing that it will be the final event an addon sees. Note that log handlers are shut down at this point, so calls to log functions will produce no output.'''

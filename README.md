@@ -37,7 +37,7 @@ nsb [OPTIONS] [--] COMMAND...
 
 It loads the `./mitm.py` addon which does the actual allowing/blocking, and takes the options:
 * `nsb_spec` - list of allow/block rules
-* `nsb_block_direct_ip` - block access to IPs that do not have a previous corresponding DNS lookup (enabled by default)
+* `nsb_allow_direct_ip` - list of subnets to allow direct access to IPs do not have a previous corresponding DNS lookup, otherwise it is blocked
 * `nsb_block_domain_fronting` - block HTTP(s) access where any of the DNS, SNI or host header do not match (enabled by default)
 * `nsb_redirect_all_dns` - redirect all DNS to the system resolver i.e. preventing processes from trying to query DNS servers directly e.g. `dig @1.1.1.1 ...` (enabled by default)
 * `nsb_ask_cmd` - shell snippet to run for the `ask` action
