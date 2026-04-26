@@ -42,7 +42,7 @@ class Matchers:
         regex = cached(re.compile, regex, re.IGNORECASE)
 
         if isinstance(data, DNSFlow):
-            return regex.search(data.requests.questions[0].name)
+            return regex.search(data.request.questions[0].name)
 
         if data.client_conn.tls and data.client_conn.sni is not None:
             return regex.search(data.client_conn.sni)
