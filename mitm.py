@@ -31,6 +31,12 @@ def only(*classes):
     return decorator
 only = partial(cached, only)
 
+def try_as_ip_address(string):
+    try:
+        return ipaddress.ip_address(string)
+    except ValueError:
+        return
+
 class Matchers:
 
     @only(DNSFlow)
@@ -49,12 +55,16 @@ class Matchers:
         elif data.server_conn.address and (names := DNS_CACHE.get(data.server_conn.address[0])):
             # we'll grab it from the dns cache
             return any(regex.search(n) for n in names)
+        elif data.server_conn.address and not try_as_ip_address(data.server_conn.address[0]):
+            return regex.search(data.server_conn.address[0])
 
     def dstip(subnet: str, data):
-        if data.server_conn and data.server_conn.address:
-            subnet = cached(ipaddress.ip_network, subnet, False)
-            ip = ipaddress.ip_address(data.server_conn.address[0])
-            return ip in subnet
+        return (
+            data.server_conn
+            and data.server_conn.address
+            and (ip := try_as_ip_address(data.server_conn.address[0]))
+            and ip in cached(ipaddress.ip_network, subnet, False)
+        )
 
     def proto(regex: str, data):
         regex = cached(re.compile, regex, re.IGNORECASE)
@@ -223,11 +233,13 @@ class NSB:
         await Actions.block(data)
 
     def is_blocked_direct_ip(self, data):
-        if isinstance(data, mitmproxy.flow.Flow) and not isinstance(data, DNSFlow) and data.server_conn.address[0] not in DNS_CACHE:
-            ip = ipaddress.ip_address(data.server_conn.address[0])
-            if not any(ip in network for network in self.allow_direct_ip):
-                return True
-        return False
+        return (
+            isinstance(data, mitmproxy.flow.Flow)
+            and not isinstance(data, DNSFlow)
+            and data.server_conn.address[0] not in DNS_CACHE
+            and (ip := try_as_ip_address(data.server_conn.address[0]))
+            and not any(ip in network for network in self.allow_direct_ip)
+        )
 
     def is_domain_fronting(self, data):
         if not isinstance(data, mitmproxy.flow.Flow) or isinstance(data, DNSFlow):
