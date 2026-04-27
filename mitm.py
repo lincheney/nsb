@@ -277,7 +277,8 @@ class NSB:
             if action == 'include':
                 with open(spec) as file:
                     for line in file:
-                        self.add_spec(line, action_parser, collection)
+                        if not line.lstrip().startswith('#'):
+                            self.add_spec(line, action_parser, collection)
             else:
                 action = action_parser(action)
                 spec = Parser(spec).parse()
