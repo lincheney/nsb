@@ -339,7 +339,7 @@ async def main():
     )
     try:
         if args.only_mitmdump:
-            proc = await handler.start_mitmproxy(handler.wg_port, standalone=False)
+            proc = await handler.start_mitmproxy(handler.wg_port, standalone=True)
             return await proc.wait()
         elif args.no_mitmdump:
             if not args.wg_port:
