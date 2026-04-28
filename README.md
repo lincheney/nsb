@@ -62,7 +62,7 @@ and the `FILTER` follows the same syntax as described [here](https://docs.mitmpr
     * this is *different* from using the `~tcp` or `~udp` filters which match *otherwise unrecognised* TCP/UDP flows,
         e.g. an HTTP request will *not* match `~tcp` but *will* match `~proto tcp`
         whereas an SSH connection *will also* match `~tcp` (because SSH is not recognised by mitmproxy)
-* there is an additional `~quic` expression that allows you match QUIC network
+* there is an additional `~quic` expression that allows you to match QUIC connections
 
 Note that all regex matches are case insensitive and done by [re.search](https://docs.python.org/3/library/re.html#re.search)!
 If you want exact matches you should use `^` and `$` anchors.
@@ -119,7 +119,7 @@ Note the limitations of each, including *scenarios where they do not work*.
 Smattering of other notes that you should pay attention to:
 
 * `nsb` is susceptible to [DNS rebinding](https://en.wikipedia.org/wiki/DNS_rebinding).
-    This can happen if you're DNS resolver is malicious or you have allowed resolution of a malicious domain.
+    This can happen if your DNS resolver is malicious or you have allowed resolution of a malicious domain.
     The workaround is not to allow resolution of unknown domains
     and/or block by destination IP with something like `block: ~dstip 10.0.0.0/8`
 * filtering websocket connections with `~websocket` doesn't work right now, instead use something like `~http & ~hq "^upgrade: websocket\r$"`
@@ -148,3 +148,6 @@ Smattering of other notes that you should pay attention to:
 * if you need *very* customised behaviour, write your own mitmproxy addon and do `nsb --scripts=...`,
     since `nsb` is just running mitmdump and passes flags through,
     for example if instead of allowing/blocking you want to spoof or modify responses.
+* there is no "configuration file" for `nsb`, you are meant to be able to specify settings ad-hoc as you run commands,
+    if this gets cumbersome, consider using aliases or a wrapper script,
+    however for `nsb_spec` *specifically*, you can do `nsb --set=nsb_spec=include:PATH` which can behave like a config file.
