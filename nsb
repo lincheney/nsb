@@ -159,7 +159,7 @@ export SSL_CERT_FILE={self.ca_path}
 
 cd .
 # drop net admin and reset user
-setpriv --inh-caps -net_admin --bounding-set -net_admin --pdeathsig SIGKILL \\
+setpriv --inh-caps -net_admin,-net_raw --bounding-set -net_admin,-net_raw --pdeathsig SIGKILL \\
 unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 {command}
 '''
