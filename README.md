@@ -97,17 +97,54 @@ For example, here is how to launch a zenity popup window:
 nsb --set=nsb_ask_cmd='zenity --question --text="Trying to make request: $1" --ok-label=Allow --cancel-label=Block --title=nsb' ...
 ```
 
-### Connection strategy
+## Running without namespacing
 
-See also: <https://docs.mitmproxy.org/stable/concepts/options/#connection_strategy>
+If you can't or don't want to do namespacing for whatever reason, you can do a manual SOCKS set up.
 
-`nsb` uses a `lazy` connection strategy by default.
-This means it attempts to read the entire request before connecting to the destination server.
-This is usually good because if the request ends up being blocked then no connection to the destination is ever made.
-
-However, this can break certain protocols where the server should send a message first, in which case you need the `eager` strategy.
-
-For example, making an FTP connection:
+Run in one terminal:
 ```bash
-nsb --set='connection_strategy=eager:~dst :21$' ... -- curl ftp://...
+./nsb --only-mitmdump --mode=socks5@PORT ...
 ```
+
+Then use something like 
+[proxychains](https://github.com/rofl0r/proxychains-ng),
+[gratfcp](https://github.com/hmgle/graftcp),
+[socko](https://github.com/lincheney/socko),
+or possibly others
+to force your command through the mitm SOCKS proxy.
+Note the limitations of each, including *scenarios where they do not work*.
+
+## Notes and limitations
+
+Smattering of other notes that you should pay attention to:
+
+* `nsb` is susceptible to [DNS rebinding](https://en.wikipedia.org/wiki/DNS_rebinding).
+    This can happen if you're DNS resolver is malicious or you have allowed resolution of a malicious domain.
+    The workaround is not to allow resolution of unknown domains
+    and/or block by destination IP with something like `block: ~dstip 10.0.0.0/8`
+* filtering websocket connections with `~websocket` doesn't work right now, instead use something like `~http & ~hq "^upgrade: websocket\r$"`
+* UDP, QUIC and possibly some TCP connections cannot be terminated normally.
+    Instead, "blocking" them will just drop the network traffic and the client will probably eventually timeout.
+* `nsb` sets `connection_strategy` to `lazy` by default.
+    This is usually good because if the request ends up being blocked then no connection to the destination is ever made.
+    However, this can break certain protocols where the server should send a message first, e.g. FTP.
+    In this case, set it to eager: `nsb --set='connection_strategy=eager' ... `
+* the command runs inside a separate network, mount, pid and user namespace.
+    This may be a problem, e.g. `nsb ... -- sshfs ...` you will first run into a user issue which can be solved with something like
+    `nsb -- unshare --mount --user --map-root-user sshfs ...`.
+    However, the sshfs will then be mounted inside its mount namespace, not the "outside" one.
+    You can "live with it" (you can get access into the namespace using `nsenter`)
+    or consider if you are ok to [run it without namespacing](#running-without-namespacing).
+* accessing the host loopback from inside `nsb`: use your LAN IP instead (e.g. your IP on your wifi).
+    This will still be mitm-ed.
+* accessing the servers running inside `nsb`: use the `--tcp-ports` or `--udp-ports` flag,
+    e.g. `nsb --tcp-ports 127.0.0.1/8000 -- python -m http.server`,
+    but do not *only* bind to `127.0.0.1` inside `nsb`, it won't work,
+    see [the pasta docs](https://passt.top/builds/latest/web/passt.1.html#t) for more info.
+* how to debug a request getting blocked:
+    Crank up the logging (`nsb --set=termlog_verbosity=debug --set=flow_detail=4 ...`),
+    and remember almost all requests do DNS first (so either allow all dns `allow:~dns` or specific domains `allow:~d domain.com`)
+    or if you are accessing something directly by IP (e.g. on private subnet) then you need `nsb --set=nsb_allow_direct_ip=IP/MASK`
+* if you need *very* customised behaviour, write your own mitmproxy addon and do `nsb --scripts=...`,
+    since `nsb` is just running mitmdump and passes flags through,
+    for example if instead of allowing/blocking you want to spoof or modify responses.
