@@ -151,8 +151,6 @@ mount --bind /tmp/resolv.conf /etc/resolv.conf -o ro
 mount --bind /tmp/certs {self.ca_path} -o ro
 umount /tmp
 
-mount --bind ~/.mitmproxy/{{,}} -o ro
-
 export CURL_CA_BUNDLE={self.ca_path}
 export AWS_CA_BUNDLE={self.ca_path}
 export SSL_CERT_FILE={self.ca_path}
