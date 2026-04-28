@@ -171,7 +171,7 @@ class Parser:
         regex = regex or self.get_one(self.WORD_REGEX).group(0)
         if regex[0] in ('"', "'"):
             regex = regex[1:-1]
-        return re.sub(r'\\(.)', r'\1', regex)
+        return re.sub(r'''\\([\\'"\s])''', r'\1', regex)
 
     def parse_number(self):
         return int(self.get_one(self.NUM_REGEX).group(0))
