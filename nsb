@@ -202,7 +202,6 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 'nsenter',
                 '--net', '--pid', '--mount', '--user',
                 '--wd=' + os.getcwd(),
-                '--keep-caps',
                 '--preserve-credentials',
                 '--target', str(child_pid),
                 '--',
