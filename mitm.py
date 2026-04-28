@@ -153,7 +153,7 @@ class Actions:
 class Parser:
     END_REGEX = re.compile('[&|]')
     END_AND_BRACKET_REGEX = re.compile('[&|)]')
-    WORD_REGEX = re.compile(r'''(?!~)(\\.|[^\s)])+|'(\\.|[^'])*'|"(\\.|[^"])*"''')
+    WORD_REGEX = re.compile(r'''(?![~'"])(\\.|[^\s)])+|'(\\.|[^'])*'|"(\\.|[^"])*"''')
     NUM_REGEX = re.compile(r'\d+')
     OPS = {k: v for k, v in vars(Matchers).items() if not k.startswith('_')}
     OPS_REGEX = re.compile(r'([!(]' + ''.join(rf'|~{k}\b' for k in OPS.keys()) + '|' + WORD_REGEX.pattern + ')')
