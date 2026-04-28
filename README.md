@@ -41,7 +41,6 @@ It loads the `./mitm.py` addon which does the actual allowing/blocking, and take
 * `nsb_block_domain_fronting` - block HTTP(s) access where any of the DNS, SNI or host header do not match (enabled by default)
 * `nsb_redirect_all_dns` - redirect all DNS to the system resolver i.e. preventing processes from trying to query DNS servers directly e.g. `dig @1.1.1.1 ...` (enabled by default)
 * `nsb_ask_cmd` - shell snippet to run for the `ask` action
-* `nsb_connection_strategy` - list of rules for the connection strategy
 
 ### `nsb_spec`
 
@@ -106,13 +105,8 @@ This means it attempts to read the entire request before connecting to the desti
 This is usually good because if the request ends up being blocked then no connection to the destination is ever made.
 
 However, this can break certain protocols where the server should send a message first, in which case you need the `eager` strategy.
-You can configure this behaviour with the `nsb_connection_strategy` option with `eager:SPEC` or `lazy:SPEC`
-(or `include:FILE` to load more rules from a file).
-Note that the connection strategy is evaluated quite early so many filters in the spec will not work properly.
-Realistically you should be able to use `~dst ...` to match on the `ip:port`
-and, provided there was a corresponding DNS query, `~d ...` to match on the hostname.
 
 For example, making an FTP connection:
 ```bash
-nsb --set='nsb_connection_strategy=eager:~dst :21$' ... -- curl ftp://...
+nsb --set='connection_strategy=eager:~dst :21$' ... -- curl ftp://...
 ```

@@ -6,7 +6,6 @@ import inspect
 import typing
 import logging
 import collections.abc
-from types import SimpleNamespace
 from functools import cache, wraps, partial
 from mitmproxy.proxy.server_hooks import ServerConnectionHookData
 from mitmproxy.dns import DNSFlow
@@ -212,7 +211,6 @@ class Parser:
 class NSB:
     def __init__(self):
         self.specs = []
-        self.connection_strategy = []
         self.allow_direct_ip = []
 
     async def apply_specs(self, data):
@@ -273,7 +271,6 @@ class NSB:
         loader.add_option("nsb_block_domain_fronting", bool, True, 'block domain fronting (mismatched dns/sni/host)')
         loader.add_option("nsb_redirect_all_dns", bool, True, 'redirect all DNS to the system resolver (including to e.g. 1.1.1.1)')
         loader.add_option("nsb_ask_cmd", str, "", "shell snippet to run for the 'ask' action")
-        loader.add_option("nsb_connection_strategy", collections.abc.Sequence[str], [], "spec for connection strategy")
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
@@ -319,14 +316,6 @@ class NSB:
                     except Exception:
                         logging.warning('Failed to parse ip network %s', value)
 
-        if 'nsb_connection_strategy' in updated:
-            self.connection_strategy.clear()
-            try:
-                for spec in mitmproxy.ctx.options.nsb_connection_strategy:
-                    self.add_spec(spec, str, self.connection_strategy)
-            except Exception:
-                pass
-
     def done(self):
         '''Called when the addon shuts down, either by being removed from the mitmproxy instance, or when mitmproxy itself shuts down. On shutdown, this event is called after the event loop is terminated, guaranteeing that it will be the final event an addon sees. Note that log handlers are shut down at this point, so calls to log functions will produce no output.'''
         '''Connection Events'''
@@ -334,16 +323,6 @@ class NSB:
     def client_connected(self, client: mitmproxy.connection.Client):
         '''A client has connected to mitmproxy. Note that a connection can correspond to multiple HTTP requests.'''
         '''Setting client.error kills the connection.'''
-        action = 'lazy'
-        try:
-            server = SimpleNamespace(address=client.sockname)
-            data = mitmproxy.flow.Flow(client, server)
-            for a, spec in self.connection_strategy:
-                if spec(data):
-                    action = a
-                    break
-        finally:
-            mitmproxy.ctx.options.connection_strategy = action
 
     def client_disconnected(self, client: mitmproxy.connection.Client):
         '''A client connection has been closed (either by us or the client).'''

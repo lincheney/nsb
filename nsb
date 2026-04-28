@@ -229,6 +229,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--scripts', self.mitm_script,
             '--show-ignored-hosts',
             f'--set=nsb_readiness_fd={w}',
+            '--set=connection_strategy=lazy',
              '--showhost',
             *self.args,
         ]
