@@ -62,6 +62,7 @@ and the `FILTER` follows the same syntax as described [here](https://docs.mitmpr
     * this is *different* from using the `~tcp` or `~udp` filters which match *otherwise unrecognised* TCP/UDP flows,
         e.g. an HTTP request will *not* match `~tcp` but *will* match `~proto tcp`
         whereas an SSH connection *will also* match `~tcp` (because SSH is not recognised by mitmproxy)
+* there is an additional `~quic` expression that allows you match QUIC network
 
 Note that all regex matches are case insensitive and done by [re.search](https://docs.python.org/3/library/re.html#re.search)!
 If you want exact matches you should use `^` and `$` anchors.

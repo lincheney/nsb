@@ -12,6 +12,9 @@ from mitmproxy.dns import DNSFlow
 import mitmproxy.flowfilter
 import mitmproxy.flow
 import mitmproxy.dns
+import mitmproxy.udp
+import mitmproxy.tcp
+import mitmproxy.http
 import mitmproxy.proxy
 
 DNS_CACHE = {}
@@ -68,6 +71,10 @@ class Matchers:
     def proto(regex: str, data):
         regex = cached(re.compile, regex, re.IGNORECASE)
         return regex.search(data.client_conn.transport_protocol)
+
+    @only(mitmproxy.udp.UDPFlow, mitmproxy.tcp.TCPFlow, mitmproxy.http.HTTPFlow)
+    def quic(data):
+        return data.client_conn.tls_version and 'quic' in data.client_conn.tls_version.lower()
 
 def AND(nodes, data):
     return all(n(data) for n in nodes)
@@ -410,6 +417,9 @@ class NSB:
 
     def tcp_message(self, flow: mitmproxy.tcp.TCPFlow):
         '''A TCP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
+        # tcp over quic can be hard to kill, so drop the messages
+        if flow.error or flow.server_conn.error:
+            flow.messages[-1].content = b''
 
     def tcp_end(self, flow: mitmproxy.tcp.TCPFlow):
         '''A TCP connection has ended.'''
@@ -424,6 +434,9 @@ class NSB:
 
     def udp_message(self, flow: mitmproxy.udp.UDPFlow):
         '''A UDP connection has received a message. The most recent message will be flow.messages[-1]. The message is user-modifiable.'''
+        # udp can be hard to kill, so drop the messages
+        if flow.error or flow.server_conn.error:
+            flow.messages[-1].content = b''
 
     def udp_end(self, flow: mitmproxy.udp.UDPFlow):
         '''A UDP connection has ended.'''
