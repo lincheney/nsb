@@ -226,12 +226,14 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--scripts', self.mitm_script,
             '--show-ignored-hosts',
             f'--set=nsb_readiness_fd={w}',
-            '--set=connection_strategy=lazy',
              '--showhost',
             *self.args,
         ]
-        if not standalone:
+
+        if not standalone and not any(a.startswith('--set=termlog_verbosity=') for a in self.args):
             args.append('--set=termlog_verbosity=warn')
+        if not any(a.startswith('--set=connection_strategy=') for a in self.args):
+            args.append('--set=connection_strategy=lazy')
 
         mitm = partial(
             self.run_process,
