@@ -206,6 +206,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
                 '--target', str(child_pid),
                 '--',
                 'bash', '-c', script_sh,
+                close_fds=False,
             )
             return await nsenter.wait()
         finally:
