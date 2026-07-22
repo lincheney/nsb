@@ -135,8 +135,9 @@ Smattering of other notes that you should pay attention to:
     However, the sshfs will then be mounted inside its mount namespace, not the "outside" one.
     You can "live with it" (you can get access into the namespace using `nsenter`)
     or consider if you are ok to [run it without namespacing](#running-without-namespacing).
-* accessing the host loopback from inside `nsb`: use your LAN IP instead (e.g. your IP on your wifi).
-    This will still be mitm-ed.
+* accessing the host loopback from inside `nsb`: use your LAN IP instead (e.g. your IP on your wifi). This will still be mitm-ed.
+    If your LAN IP changes a lot, you may also try doing some rerouting: pick an IP e.g. 169.254.0.1 and do
+    `nsb --set=nsb_allow_direct_ip=169.254.0.1 --set=map_remote=/169.254.0.1:/127.0.0.1: ...`
 * accessing the servers running inside `nsb`: use the `--tcp-ports` or `--udp-ports` flag,
     e.g. `nsb --tcp-ports 127.0.0.1/8000 -- python -m http.server`,
     but do not *only* bind to `127.0.0.1` inside `nsb`, it won't work,
