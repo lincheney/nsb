@@ -200,11 +200,12 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         try:
             nsenter = await self.run_process(
                 'nsenter',
-                '--net', '--pid', '--mount', '--user',
+                '--net', '--user',
                 '--wd=' + os.getcwd(),
                 '--preserve-credentials',
                 '--target', str(child_pid),
                 '--',
+                'unshare', '--mount',
                 'bash', '-c', script_sh,
                 close_fds=False,
             )
