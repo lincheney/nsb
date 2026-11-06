@@ -87,11 +87,8 @@ class Handler:
         self.root_dir = Path(__file__).resolve().parent
         self.mitm_script = self.root_dir/'mitm.py'
 
-        self.tap_iface = 'eth0'
-        self.wg_iface = 'eth1'
-        self.tap_subnet = '169.254.2.1/32'
-        self.host_ip = '192.168.1.2'
-        self.wg_ip = '192.168.2.2'
+        self.wg_iface = 'eth0'
+        self.wg_ip = '192.168.1.2'
         self.wg_subnet = f'{self.wg_ip}/24'
         self.wg_conf = Path('~/.mitmproxy/wireguard.conf').expanduser()
         # seems to be a special ip
@@ -123,19 +120,14 @@ extract_json() {{ {python} -c 'import sys, json; print(json.load(sys.stdin)[sys.
 # set up wireguard
 ip link add dev {self.wg_iface} type wireguard
 ip address add dev {self.wg_iface} {self.wg_subnet}
-wg set {self.wg_iface} private-key <(<{wg_conf} extract_json client_key) peer "$(<{wg_conf} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {self.host_ip}:{wg_port}
+wg set {self.wg_iface} private-key <(<{wg_conf} extract_json client_key) peer "$(<{wg_conf} extract_json server_key | wg pubkey)" allowed-ips 0.0.0.0/0 endpoint {LOCALHOST}:{wg_port}
 ip link set up dev {self.wg_iface}
 
 # route everything through wireguard
-ip route show | grep -F 'dev {self.tap_iface}' | cut -d' ' -f1 | xargs -n1 ip route del
 ip route add default via {self.wg_ip} dev {self.wg_iface}
-ip route add {self.host_ip}/32 dev {self.tap_iface}
-# drop everything else
-iptables -A OUTPUT -p udp -d {self.host_ip} --dport {wg_port} -o {self.tap_iface} -j ACCEPT
 for cmd in iptables ip6tables; do
     cat <<EOF | "$cmd-restore" -n
 *filter
--A OUTPUT -o {self.tap_iface} -j DROP
 -A OUTPUT -p udp -o {self.wg_iface} -j ACCEPT
 -A OUTPUT -p tcp -o {self.wg_iface} -j ACCEPT
 -A OUTPUT -o {self.wg_iface} -j DROP
@@ -170,15 +162,11 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         args = [
             'pasta',
             '--ipv4-only',
-            '--address', self.tap_subnet.partition('/')[0],
-            '--netmask', self.tap_subnet.partition('/')[2],
             '-T', 'none',
-            '-U', 'none',
+            '-U', str(self.wg_port), # only outbound udp to wireguard
             '-t', self.tcp_ports,
             '-u', self.udp_ports,
-            '-I', self.tap_iface,
-            '--map-host-loopback', self.host_ip,
-            '--config-net',
+            '--splice-only',
             '--no-icmp',
             '--no-dhcp',
             '--no-dhcpv6',
