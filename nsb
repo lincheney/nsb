@@ -185,6 +185,9 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '--no-ndp',
             '--no-ra',
         ]
+        if self.tcp_ports == 'none':
+            # i can drop even tcp because all traffic should be wireguard over udp
+            args.append('--no-tcp')
         pasta = await self.run_process(
             *args,
             '--',
