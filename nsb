@@ -179,6 +179,11 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             '-I', self.tap_iface,
             '--map-host-loopback', self.host_ip,
             '--config-net',
+            '--no-icmp',
+            '--no-dhcp',
+            '--no-dhcpv6',
+            '--no-ndp',
+            '--no-ra',
         ]
         pasta = await self.run_process(
             *args,
