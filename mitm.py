@@ -278,6 +278,7 @@ class NSB:
         loader.add_option("nsb_block_domain_fronting", bool, True, 'block domain fronting (mismatched dns/sni/host)')
         loader.add_option("nsb_redirect_all_dns", bool, True, 'redirect all DNS to the system resolver (including to e.g. 1.1.1.1)')
         loader.add_option("nsb_ask_cmd", str, "", "shell snippet to run for the 'ask' action")
+        loader.add_option("nsb_host_loopback", str, "", "address that will be redirected to host loopback")
 
     def running(self):
         '''Called when the proxy is completely up and running. At this point, you can expect all addons to be loaded and all options to be set.'''
@@ -334,9 +335,11 @@ class NSB:
     #  def client_disconnected(self, client: mitmproxy.connection.Client):
         #  '''A client connection has been closed (either by us or the client).'''
 
-    #  async def server_connect(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
-        #  '''Mitmproxy is about to connect to a server. Note that a connection can correspond to multiple requests.'''
-        #  '''Setting data.server.error kills the connection.'''
+    async def server_connect(self, data: mitmproxy.proxy.server_hooks.ServerConnectionHookData):
+        '''Mitmproxy is about to connect to a server. Note that a connection can correspond to multiple requests.'''
+        '''Setting data.server.error kills the connection.'''
+        if mitmproxy.ctx.options.nsb_host_loopback and data.server.address[0] == mitmproxy.ctx.options.nsb_host_loopback:
+            data.server.address = ('127.0.0.1', data.server.address[1])
         #  #  print(f'''DEBUG(jawed) \t{data = }''', file=sys.__stderr__)
         #  # await self.apply_specs(data)
 
