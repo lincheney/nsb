@@ -71,7 +71,7 @@ async def udp_gc_clients(proxies, interval=20):
                 counters[addr] = proxies[addr][1].activity_counter
 
 class Handler:
-    def __init__(self, args, extras, lazy=False, tcp_ports=None, udp_ports=None, wg_port=None, logfile=None):
+    def __init__(self, args, extras, mitmdump_path=None, lazy=False, tcp_ports=None, udp_ports=None, wg_port=None, logfile=None):
         self.args = args
         self.extras = extras
         self.mitm = None
@@ -82,7 +82,7 @@ class Handler:
         self.wg_port = wg_port or get_free_port()
         self.processes = []
 
-        self.mitmproxy_path = shutil.which('mitmdump')
+        self.mitmdump_path = mitmdump_path or shutil.which('mitmdump')
 
         self.root_dir = Path(__file__).resolve().parent
         self.mitm_script = self.root_dir/'mitm.py'
@@ -219,7 +219,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         r, w = os.pipe()
 
         args = [
-            self.mitmproxy_path,
+            self.mitmdump_path,
             '--mode', f'wireguard@{LOCALHOST}:{wg_port}',
             '--scripts', self.mitm_script,
             '--show-ignored-hosts',
@@ -301,6 +301,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
 async def main():
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group()
+    group.add_argument('--mitmdump-path', help='path to mitmdump')
     group.add_argument('--lazy-mitmdump', action='store_true', help='start mitmproxy lazily')
     group.add_argument('--only-mitmdump', action='store_true', help='only start mitmdump, do not run the command')
     group.add_argument('--no-mitmdump', action='store_true', help='only run the command, do not run start mitmdump')
@@ -330,6 +331,7 @@ async def main():
         mitm_args,
         args.command,
         lazy=args.lazy_mitmdump,
+        mitmdump_path=args.mitmdump_path,
         tcp_ports=args.tcp_ports,
         udp_ports=args.udp_ports,
         wg_port=args.wg_port,
