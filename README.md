@@ -41,6 +41,7 @@ It loads the `./mitm.py` addon which does the actual allowing/blocking, and take
 * `nsb_block_domain_fronting` - block HTTP(s) access where any of the DNS, SNI or host header do not match (enabled by default)
 * `nsb_redirect_all_dns` - redirect all DNS to the system resolver i.e. preventing processes from trying to query DNS servers directly e.g. `dig @1.1.1.1 ...` (enabled by default)
 * `nsb_ask_cmd` - shell snippet to run for the `ask` action
+* `nsb_host_loopback` - ip address that will get redirected to 127.0.0.1 on the host
 
 ### `nsb_spec`
 
