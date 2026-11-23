@@ -160,6 +160,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
         # this seems to work
 
         args = [
+            'setpriv', '--pdeathsig', 'SIGKILL',
             'pasta',
             '--ipv4-only',
             '-T', 'none',
