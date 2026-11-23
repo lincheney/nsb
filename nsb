@@ -163,6 +163,7 @@ unshare --map-user {os.geteuid()} --map-group {os.getegid()} -- \\
             'setpriv', '--pdeathsig', 'SIGKILL',
             'pasta',
             '--ipv4-only',
+            '--log-file', '/dev/null',
             '-T', 'none',
             '-U', str(self.wg_port), # only outbound udp to wireguard
             '-t', self.tcp_ports,
